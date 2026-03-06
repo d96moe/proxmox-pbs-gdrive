@@ -298,12 +298,19 @@ chmod +x restore-3-pve.sh
 
 ### Step 4: Manual — Restore VMs/LXCs via Proxmox GUI
 
+> ⚠️ After a full disaster recovery there are no VMs or LXCs yet — so you cannot
+> navigate to a VM and click its Backup tab. Instead, browse the PBS storage directly:
+
 1. Open Proxmox web GUI
-2. Navigate to the VM/LXC you want to restore
-3. Click **Backup** tab
-4. Select storage `pbs-local` in the dropdown (top right)
-5. Select the desired snapshot
-6. Click **Restore**
+2. Go to **Datacenter → Storage → pbs-local**
+3. Click the **Content** tab
+4. All snapshots from the PBS datastore are listed here, regardless of whether the VMs exist
+5. Select a snapshot and click **Restore**
+6. Enter the VM/LXC ID to restore it as (use the original ID or a new one)
+7. Repeat for each VM/LXC you want to restore
+
+If you only want to restore a single VM (not a full recovery), you can also navigate
+to that VM → **Backup** tab → select `pbs-local` in the dropdown (top right) → Restore.
 
 ---
 
