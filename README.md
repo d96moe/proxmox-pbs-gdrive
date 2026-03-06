@@ -23,6 +23,31 @@ Proxmox VE (nightly)
 | 03:00 | PBS prune (keep-last=3, keep-daily=7, keep-weekly=4) |
 | 03:30 | restic forget (keep-last=3, keep-daily=6, keep-weekly=3, keep-monthly=5) |
 
+---
+
+## ⚠️ BEFORE YOU RUN ANYTHING — Edit config.env
+
+All scripts source a single `config.env` file. **You must review and edit this file
+before running any script.** The defaults are set for the home Proxmox instance.
+
+Open `config.env` and verify/change the following:
+
+| Variable | Default | Change for cabin? | Description |
+|---|---|---|---|
+| `PBS_DATASTORE_SIZE` | `350G` | **YES** → `100G` | Size of LVM volume for PBS |
+| `PBS_LVM_VG` | `pve` | Verify with `vgs` | LVM volume group |
+| `PBS_LVM_THIN_POOL` | `data` | Verify with `lvs` | LVM thin pool |
+| `PBS_USER_PASSWORD` | `changeme` | **YES — always** | Set a strong password! |
+| `RESTICPROFILE_GDRIVE_PATH` | `bu/proxmox_home` | **YES** → `bu/proxmox_cabin` | Google Drive path |
+
+To verify LVM names on your system before editing:
+```bash
+vgs   # shows volume group names
+lvs   # shows logical volume and pool names
+```
+
+---
+
 ## Disaster Recovery Procedure
 
 ### Prerequisites
@@ -31,7 +56,7 @@ Before running the scripts you need:
 - A fresh Proxmox VE installation on new hardware
 - Network configured (same hostname/IP recommended)
 - Internet access to reach Google Drive
-- Your restic repository password (store this somewhere safe!)
+- Your restic repository password (store this somewhere safe, e.g. a password manager!)
 
 ---
 
@@ -41,21 +66,29 @@ Before running the scripts you need:
 2. Boot from ISO and install
 3. Configure network (hostname, IP, gateway, DNS)
 4. SSH in as root
+5. Clone or copy this repo to the server:
+   ```bash
+   apt-get install -y git
+   git clone https://github.com/YOUR-USERNAME/proxmox-backup-restore.git
+   cd proxmox-backup-restore
+   ```
 
 ---
 
-### Step 1: Run restore-1-install.sh
+### Step 1: Edit config.env, then run restore-1-install.sh
 
-Installs PBS, rclone, restic, resticprofile and prepares storage.
+See the table above. Edit `config.env` first, then:
 
 ```bash
 chmod +x restore-1-install.sh
 ./restore-1-install.sh
 ```
 
+The script will print your configuration and ask you to confirm before doing anything.
+
 **After script completes:**
 
-#### A) Create Google OAuth credentials (one-time setup)
+#### A) Create Google OAuth credentials (one-time setup, skip if you already have these)
 
 You need a **Desktop app** OAuth client in Google Cloud Console. Do this from any browser:
 
@@ -70,13 +103,13 @@ You need a **Desktop app** OAuth client in Google Cloud Console. Do this from an
 9. Click **Create**
 10. Copy the **Client ID** and **Client Secret** — you will need these in the next step
 
-> ⚠️ If you see a warning about the app being unverified, that is expected for personal OAuth apps.
-> If prompted to configure OAuth consent screen: choose **External**, fill in app name (e.g. "rclone"),
-> add your Gmail address as both developer and test user, save and continue through all steps.
+> ⚠️ If prompted to configure OAuth consent screen: choose **External**, fill in app name
+> (e.g. "rclone"), add your Gmail address as both developer and test user, save and continue.
 
 #### B) Configure rclone on the PVE server
 
-Since the PVE server has no browser, you need a second machine (Windows/Mac/Linux with a browser) nearby.
+Since the PVE server has no browser, you need a second machine (Windows/Mac/Linux with
+a browser) with rclone installed (https://rclone.org/downloads/).
 
 On the **PVE server**, run:
 
@@ -88,23 +121,22 @@ Follow the prompts:
 
 ```
 n          # New remote
-gdrive     # Name (must match RESTICPROFILE_GDRIVE_REMOTE in scripts)
+gdrive     # Name — must match RESTICPROFILE_GDRIVE_REMOTE in config.env
 drive      # Type: Google Drive
            # Paste your Client ID from step A
            # Paste your Client Secret from step A
 1          # Scope: full access
-           # Leave blank (no service account)
+           # Leave blank (no service account file)
 n          # No advanced config
 n          # No auto browser auth (server has no browser)
 ```
 
-rclone will now print a command like (the token string will be unique each time):
+rclone will now print a command like:
 ```
 rclone authorize "drive" "<YOUR-UNIQUE-TOKEN-STRING>"
 ```
 
-Copy the exact command from your terminal. On your **Windows/Mac machine** (with rclone installed, see https://rclone.org/downloads/), paste and run it:
-
+Copy the **exact command** from your terminal. On your **Windows/Mac machine**, paste and run it:
 ```
 rclone authorize "drive" "<YOUR-UNIQUE-TOKEN-STRING>"
 ```
@@ -122,15 +154,17 @@ q          # Quit config
 
 ```bash
 rclone lsd gdrive:bu
-# Should list folders in your Google Drive bu/ folder
+# Should list folders including proxmox_home (or proxmox_cabin)
 ```
 
-#### Save restic password
+#### D) Save restic password
 
 ```bash
 echo 'YOUR-RESTIC-PASSWORD' > /etc/resticprofile/restic-password
 chmod 600 /etc/resticprofile/restic-password
 ```
+
+> ⚠️ This password is required to access the backup. Store it in a password manager!
 
 ---
 
@@ -149,7 +183,7 @@ chmod +x restore-2-auth.sh
 
 ### Step 3: Run restore-3-pve.sh
 
-Configures PBS, sets up PVE storage integration and schedules.
+Configures PBS, sets up PVE storage integration and activates nightly schedules.
 
 ```bash
 chmod +x restore-3-pve.sh
@@ -171,16 +205,14 @@ chmod +x restore-3-pve.sh
 
 ## Verify Backup Health
 
-Check that nightly backups are running:
-
 ```bash
-# Check restic schedule
+# Check restic schedule timers
 systemctl list-timers | grep restic
 
 # List restic snapshots in Google Drive
 resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup snapshots
 
-# Check PBS snapshots
+# Check PBS snapshots locally
 proxmox-backup-client snapshots --repository backup@pbs@127.0.0.1:local-store
 
 # Check PBS datastore disk usage
@@ -188,9 +220,13 @@ df -h /mnt/pbs
 df -i /mnt/pbs
 ```
 
+---
+
 ## Notes
 
-- PBS datastore uses **ext4 with default inode ratio** — do NOT format with `-T largefile4` as PBS creates many small chunk files
-- restic stores PBS chunks as-is (already deduplicated by PBS), so Google Drive usage ≈ local PBS datastore size
+- PBS datastore uses **ext4 with default inode ratio** — do NOT format with `-T largefile4`
+  as PBS creates many small chunk files and will run out of inodes
+- restic stores PBS chunks as-is (already deduplicated by PBS), so Google Drive
+  usage ≈ local PBS datastore size (not double)
 - First restic snapshot takes several hours; subsequent snapshots are incremental and fast
-- PBS is stopped during restic backup to ensure consistent snapshot (run-before/run-after in resticprofile)
+- PBS is stopped during restic backup to ensure consistent snapshot

@@ -5,7 +5,7 @@
 #
 # Prerequisites:
 #   - restore-1-install.sh completed
-#   - rclone configured manually (rclone config)
+#   - rclone configured manually (rclone config - see README)
 #   - Restic password saved to /etc/resticprofile/restic-password
 #
 # After this script: run restore-3-pve.sh
@@ -13,16 +13,13 @@
 
 set -euo pipefail
 
-# =============================================================================
-# CONFIGURATION - must match restore-1-install.sh
-# =============================================================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PBS_DATASTORE_PATH="/mnt/pbs"
-RESTICPROFILE_GDRIVE_REMOTE="gdrive"
-RESTICPROFILE_GDRIVE_PATH="bu/proxmox_home"
-RESTIC_PASSWORD_FILE="/etc/resticprofile/restic-password"
-
-# =============================================================================
+if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
+    echo "ERROR: config.env not found in ${SCRIPT_DIR}"
+    exit 1
+fi
+source "${SCRIPT_DIR}/config.env"
 
 echo "=== Step 1: Verify rclone access to Google Drive ==="
 rclone lsd ${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}
@@ -68,4 +65,4 @@ echo ""
 echo "=== restore-2-auth.sh COMPLETE ==="
 echo ""
 echo "PBS datastore restored to ${PBS_DATASTORE_PATH}"
-echo "Next step: Run restore-3-pve.sh"
+echo "Next step: ./restore-3-pve.sh"

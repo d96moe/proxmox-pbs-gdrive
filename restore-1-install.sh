@@ -4,35 +4,34 @@
 # Step 1: Install PBS, rclone, restic, resticprofile and prepare storage
 #
 # Prerequisites:
-#   - Fresh Proxmox VE installed
-#   - Network configured
+#   - Fresh Proxmox VE installed and network configured
 #   - Run as root on PVE host
+#   - EDIT config.env BEFORE running this script!
 #
-# After this script: run restore-2-auth.sh
+# After this script:
+#   1. Run: rclone config  (see README for detailed instructions)
+#   2. Save restic password to /etc/resticprofile/restic-password
+#   3. Run restore-2-auth.sh
 # =============================================================================
 
 set -euo pipefail
 
-# =============================================================================
-# CONFIGURATION - adjust these variables for your environment
-# =============================================================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PBS_DATASTORE_NAME="local-store"
-PBS_DATASTORE_PATH="/mnt/pbs"
-PBS_DATASTORE_SIZE="350G"          # Size of LVM thin volume for PBS
-PBS_LVM_VG="pve"                   # LVM volume group (usually 'pve')
-PBS_LVM_THIN_POOL="data"           # LVM thin pool name (usually 'data')
-PBS_LVM_VOL_NAME="pbs-datastore"   # LVM volume name
+# Load configuration
+if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
+    echo "ERROR: config.env not found in ${SCRIPT_DIR}"
+    echo "Copy config.env to the same directory as this script and edit it first!"
+    exit 1
+fi
+source "${SCRIPT_DIR}/config.env"
 
-PBS_USER="backup@pbs"
-PBS_USER_PASSWORD="changeme"       # Change this!
-PBS_TOKEN_NAME="pve-token"
-
-RESTICPROFILE_GDRIVE_REMOTE="gdrive"
-RESTICPROFILE_GDRIVE_PATH="bu/proxmox_home"
-RESTIC_PASSWORD_FILE="/etc/resticprofile/restic-password"
-
-# =============================================================================
+echo "=== Configuration loaded ==="
+echo "  PBS datastore:    ${PBS_DATASTORE_PATH} (${PBS_DATASTORE_SIZE})"
+echo "  LVM:              ${PBS_LVM_VG}/${PBS_LVM_THIN_POOL} -> ${PBS_LVM_VOL_NAME}"
+echo "  Google Drive:     ${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}"
+echo ""
+read -p "Does this look correct? Press Enter to continue or Ctrl+C to abort..."
 
 echo "=== Step 1: Install Proxmox Backup Server ==="
 echo "deb http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription" \
@@ -63,7 +62,7 @@ mount ${PBS_DATASTORE_PATH}
 echo "=== Step 6: Create PBS datastore ==="
 proxmox-backup-manager datastore create ${PBS_DATASTORE_NAME} ${PBS_DATASTORE_PATH}
 
-echo "=== Step 7: Create PBS user and token ==="
+echo "=== Step 7: Create PBS user and ACL ==="
 proxmox-backup-manager user create ${PBS_USER} --password "${PBS_USER_PASSWORD}"
 proxmox-backup-manager user generate-token ${PBS_USER} ${PBS_TOKEN_NAME}
 proxmox-backup-manager acl update /datastore/${PBS_DATASTORE_NAME} DatastoreBackup \
@@ -104,7 +103,7 @@ pbs-backup:
   backup:
     source:
       - "${PBS_DATASTORE_PATH}"
-    schedule: "02:30"
+    schedule: "${RESTIC_BACKUP_SCHEDULE}"
     schedule-permission: system
     run-before:
       - "/usr/local/bin/stop-proxmox-backup.sh"
@@ -121,7 +120,7 @@ pbs-backup:
     keep-weekly: 3
     keep-monthly: 5
     prune: true
-    schedule: "03:30"
+    schedule: "${RESTIC_FORGET_SCHEDULE}"
     schedule-permission: system
 YAML
 
@@ -129,6 +128,6 @@ echo ""
 echo "=== restore-1-install.sh COMPLETE ==="
 echo ""
 echo "Next steps:"
-echo "  1. Run: rclone config   (configure Google Drive remote named '${RESTICPROFILE_GDRIVE_REMOTE}')"
-echo "  2. Save restic password: echo 'YOUR-PASSWORD' > ${RESTIC_PASSWORD_FILE} && chmod 600 ${RESTIC_PASSWORD_FILE}"
-echo "  3. Run: restore-2-auth.sh"
+echo "  1. Run: rclone config   (see README - configure remote named '${RESTICPROFILE_GDRIVE_REMOTE}')"
+echo "  2. echo 'YOUR-PASSWORD' > ${RESTIC_PASSWORD_FILE} && chmod 600 ${RESTIC_PASSWORD_FILE}"
+echo "  3. ./restore-2-auth.sh"
