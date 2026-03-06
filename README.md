@@ -14,6 +14,84 @@ Proxmox VE (nightly)
 - **restic** snapshots the PBS datastore to Google Drive nightly
 - **rclone** provides the Google Drive transport for restic
 
+---
+
+## How it works & why
+
+### Why not just rclone directly to Google Drive?
+
+The obvious approach — pointing rclone directly at the PBS datastore and syncing to
+Google Drive — is known to break PBS. PBS stores backups as thousands of small chunk
+files in a `.chunks/` directory, and relies on precise file metadata (atime, permissions,
+ownership) to maintain the integrity of its deduplication index. rclone's sync operations
+update atime and can alter permissions, which silently corrupts the chunk index. This is a
+well-documented issue confirmed by multiple users in the Proxmox community.
+
+### Why PBS + restic?
+
+The solution is to use restic as a middle layer:
+
+- **PBS** runs locally and does what it does best: incremental, deduplicated, compressed
+  VM/LXC backups with a clean restore UI in Proxmox. Multiple restore points (last 3,
+  daily for a week, weekly for a month) without multiplying disk usage thanks to deduplication.
+
+- **restic** treats the entire PBS datastore as an opaque collection of files and backs it
+  up to Google Drive. It never modifies the source, so PBS internals stay intact.
+
+- **rclone** is used purely as a transport layer by restic, handling the Google Drive
+  OAuth and API communication.
+
+### Why stop PBS during the restic backup?
+
+PBS must be stopped before restic takes its snapshot. If PBS is writing new chunks or
+updating index files while restic reads the datastore, the result is an inconsistent
+snapshot that cannot be restored. The `stop-proxmox-backup.sh` script waits until PBS
+has no running tasks, stops it, lets restic run, then automatically restarts PBS when
+done — or if it fails.
+
+The nightly window looks like this:
+
+```
+02:00  PBS backup starts    (all VMs/LXCs backed up to local datastore)
+02:30  restic starts        (PBS stopped -> snapshot to Google Drive -> PBS restarted)
+03:00  PBS prune runs       (old local snapshots removed per retention policy)
+03:30  restic forget runs   (old Google Drive snapshots removed per retention policy)
+```
+
+### What does incremental backup mean here?
+
+There are two levels of incrementality:
+
+**PBS level:** After the first backup, PBS only transfers changed blocks from each VM/LXC
+disk. A 512GB Ollama VM with 86% empty space takes ~12 minutes the first time; subsequent
+nightly backups take seconds to minutes if little has changed.
+
+**restic level:** After the first upload to Google Drive (several hours), restic only
+uploads new PBS chunks — the data from VMs that changed since last night. A typical
+nightly restic run uploads a few hundred MB rather than the full datastore.
+
+### Storage sizing
+
+Because PBS already deduplicates and compresses, restic finds almost nothing to compress
+further. restic copies PBS chunks as-is, so each restic snapshot on Google Drive is
+the same size as the local PBS datastore at that point in time.
+
+The two retention policies are deliberately different:
+
+| | Local PBS | Google Drive (restic) |
+|---|---|---|
+| keep-last | 3 | 3 |
+| keep-daily | 7 | 6 |
+| keep-weekly | 4 | 3 |
+| keep-monthly | — | 5 |
+
+Google Drive keeps monthly snapshots for 5 months, giving longer history for disaster
+recovery. Local PBS keeps fewer snapshots to conserve disk space on the NVMe datastore.
+Since restic is incremental and PBS chunks are shared between snapshots, the extra
+monthly snapshots on Google Drive cost very little additional storage.
+
+---
+
 ## Backup Schedule
 
 | Time  | Job |
