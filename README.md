@@ -5,9 +5,35 @@ Disaster recovery scripts for Proxmox VE with PBS + restic + rclone → Google D
 ## Architecture
 
 ```
-Proxmox VE (nightly)
-    └── PBS (Proxmox Backup Server) → /mnt/pbs (LVM thin volume)
-            └── restic (02:30 nightly) → rclone → Google Drive (bu/proxmox_home)
+┌─────────────────────────────────────────────────────────────┐
+│                      Proxmox VE Host                         │
+│                                                              │
+│  ┌──────────────┐  02:00   ┌──────────────────────────────┐ │
+│  │  VMs & LXCs  │─backup──▶│  PBS (Proxmox Backup Server) │ │
+│  │              │          │  /mnt/pbs  (LVM thin volume)  │ │
+│  │  vm/100 Win  │          │  dedup + compressed chunks    │ │
+│  │  vm/101 HAOS │          │  retention: last 3, daily 7,  │ │
+│  │  vm/102 LLM  │          │  weekly 4                     │ │
+│  │  ct/10x LXCs │          └──────────────┬───────────────┘ │
+│  └──────────────┘                         │                  │
+│                                      02:30 PBS stopped       │
+│                                           │                  │
+│                          ┌────────────────▼──────────────┐  │
+│                          │  restic                        │  │
+│                          │  reads PBS chunks as-is        │  │
+│                          │  no re-compression needed      │  │
+│                          └────────────────┬──────────────┘  │
+│                                      PBS restarted           │
+└──────────────────────────────────────────┼──────────────────┘
+                                           │ rclone (Google Drive transport)
+                                           ▼
+                          ┌───────────────────────────────┐
+                          │  Google Drive                  │
+                          │  bu/proxmox_home               │
+                          │  restic repository             │
+                          │  retention: last 3, daily 6,   │
+                          │  weekly 3, monthly 5           │
+                          └───────────────────────────────┘
 ```
 
 - **PBS** handles incremental, deduplicated VM/LXC backups locally
