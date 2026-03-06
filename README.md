@@ -98,15 +98,15 @@ n          # No advanced config
 n          # No auto browser auth (server has no browser)
 ```
 
-rclone will now print a command like:
+rclone will now print a command like (the token string will be unique each time):
 ```
-rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlIn0"
+rclone authorize "drive" "<YOUR-UNIQUE-TOKEN-STRING>"
 ```
 
-On your **Windows/Mac machine** (with rclone installed, see https://rclone.org/downloads/):
+Copy the exact command from your terminal. On your **Windows/Mac machine** (with rclone installed, see https://rclone.org/downloads/), paste and run it:
 
 ```
-rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlIn0"
+rclone authorize "drive" "<YOUR-UNIQUE-TOKEN-STRING>"
 ```
 
 This opens a browser window — log in with your Google account and click Allow.
