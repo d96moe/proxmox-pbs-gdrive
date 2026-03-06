@@ -55,18 +55,75 @@ chmod +x restore-1-install.sh
 
 **After script completes:**
 
-#### Configure rclone manually (requires browser)
+#### A) Create Google OAuth credentials (one-time setup)
+
+You need a **Desktop app** OAuth client in Google Cloud Console. Do this from any browser:
+
+1. Go to https://console.cloud.google.com
+2. Select your project (or create a new one)
+3. Navigate to **APIs & Services → Library**
+4. Search for **Google Drive API** and click **Enable**
+5. Navigate to **APIs & Services → Credentials**
+6. Click **+ Create Credentials → OAuth client ID**
+7. Application type: **Desktop app**
+8. Name: `rclone` (or anything)
+9. Click **Create**
+10. Copy the **Client ID** and **Client Secret** — you will need these in the next step
+
+> ⚠️ If you see a warning about the app being unverified, that is expected for personal OAuth apps.
+> If prompted to configure OAuth consent screen: choose **External**, fill in app name (e.g. "rclone"),
+> add your Gmail address as both developer and test user, save and continue through all steps.
+
+#### B) Configure rclone on the PVE server
+
+Since the PVE server has no browser, you need a second machine (Windows/Mac/Linux with a browser) nearby.
+
+On the **PVE server**, run:
 
 ```bash
 rclone config
 ```
 
-- Choose `n` (new remote)
-- Name: `gdrive`
-- Type: `drive` (Google Drive)
-- Use your own client_id/secret (Desktop app type in Google Cloud Console)
-- Scope: `1` (full access)
-- When asked about browser auth: choose `n`, then open the provided URL in a browser on another machine
+Follow the prompts:
+
+```
+n          # New remote
+gdrive     # Name (must match RESTICPROFILE_GDRIVE_REMOTE in scripts)
+drive      # Type: Google Drive
+           # Paste your Client ID from step A
+           # Paste your Client Secret from step A
+1          # Scope: full access
+           # Leave blank (no service account)
+n          # No advanced config
+n          # No auto browser auth (server has no browser)
+```
+
+rclone will now print a command like:
+```
+rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlIn0"
+```
+
+On your **Windows/Mac machine** (with rclone installed, see https://rclone.org/downloads/):
+
+```
+rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlIn0"
+```
+
+This opens a browser window — log in with your Google account and click Allow.
+Copy the resulting token (long JSON string) and paste it back into the PVE server terminal.
+
+```
+n          # Not a shared/team drive
+y          # Confirm and save
+q          # Quit config
+```
+
+#### C) Verify rclone works
+
+```bash
+rclone lsd gdrive:bu
+# Should list folders in your Google Drive bu/ folder
+```
 
 #### Save restic password
 
