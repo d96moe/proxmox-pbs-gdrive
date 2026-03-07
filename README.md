@@ -24,16 +24,28 @@ Disaster recovery scripts for Proxmox VE with PBS + restic + rclone → Google D
 │                          │  no re-compression needed      │  │
 │                          └────────────────┬──────────────┘  │
 │                                      PBS restarted           │
+│                                           │                  │
+│  ┌─────────────────────────┐  04:00       │                  │
+│  │  PVE host config        │──────────────┤                  │
+│  │  /etc/pve/              │  rclone      │                  │
+│  │  /root/.config/rclone/  │  direct      │                  │
+│  │  /etc/resticprofile/    │              │                  │
+│  │  /etc/network/ etc      │              │                  │
+│  └─────────────────────────┘              │                  │
 └──────────────────────────────────────────┼──────────────────┘
-                                           │ rclone (Google Drive transport)
-                                           ▼
-                          ┌───────────────────────────────┐
+                                           │
+                          ┌────────────────▼──────────────┐
                           │  Google Drive                  │
-                          │  bu/proxmox_home               │
-                          │  restic repository             │
-                          │  retention: last 3, daily 6,   │
-                          │  weekly 3, monthly 5           │
-                          └───────────────────────────────┘
+                          │                                │
+                          │  bu/proxmox_home/              │
+                          │    restic repo                 │
+                          │    retention: last 3, daily 6, │
+                          │    weekly 3, monthly 5         │
+                          │                                │
+                          │  bu/proxmox_home_config/       │
+                          │    pve-config-YYYY-MM-DD.tar.gz│
+                          │    last 7 days kept            │
+                          └────────────────────────────────┘
 ```
 
 - **PBS** handles incremental, deduplicated VM/LXC backups locally
@@ -122,10 +134,11 @@ monthly snapshots on Google Drive cost very little additional storage.
 
 | Time  | Job |
 |-------|-----|
-| 02:00 | PBS backup all VMs/LXCs |
-| 02:30 | restic snapshot PBS datastore → Google Drive |
+| 02:00 | PBS backup all VMs/LXCs → local datastore |
+| 02:30 | restic: PBS stopped → snapshot to Google Drive → PBS restarted |
 | 03:00 | PBS prune (keep-last=3, keep-daily=7, keep-weekly=4) |
 | 03:30 | restic forget (keep-last=3, keep-daily=6, keep-weekly=3, keep-monthly=5) |
+| 04:00 | PVE host config backup → Google Drive (rclone direct, keep 7 days) |
 
 ---
 
@@ -142,7 +155,8 @@ Open `config.env` and verify/change the following:
 | `PBS_LVM_VG` | `pve` | Verify with `vgs` | LVM volume group |
 | `PBS_LVM_THIN_POOL` | `data` | Verify with `lvs` | LVM thin pool |
 | `PBS_USER_PASSWORD` | `changeme` | **YES — always** | Set a strong password! |
-| `RESTICPROFILE_GDRIVE_PATH` | `bu/proxmox_home` | **YES** → `bu/proxmox_cabin` | Google Drive path |
+| `RESTICPROFILE_GDRIVE_PATH` | `bu/proxmox_home` | **YES** → `bu/proxmox_cabin` | Google Drive restic repo path |
+| `GDRIVE_CONFIG_FOLDER` | `proxmox_home_config` | **YES** → `proxmox_cabin_config` | Google Drive config backup folder |
 
 To verify LVM names on your system before editing:
 ```bash
@@ -274,14 +288,19 @@ chmod 600 /etc/resticprofile/restic-password
 
 ### Step 2: Run restore-2-auth.sh
 
-Verifies Google Drive access and restores PBS datastore from restic.
+This script:
+1. Verifies rclone access to Google Drive
+2. **Downloads and extracts the latest PVE config tarball** — this restores rclone auth,
+   restic password, PBS config, network config and all custom scripts automatically
+3. Restores the full PBS datastore from the restic repo on Google Drive
 
 ```bash
 chmod +x restore-2-auth.sh
 ./restore-2-auth.sh
 ```
 
-⚠️ This will download ~190GB+ from Google Drive. Allow several hours.
+⚠️ Downloading the PBS datastore (~190GB+) takes several hours.
+The config tarball itself is only a few MB and downloads in seconds.
 
 ---
 

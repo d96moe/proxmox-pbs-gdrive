@@ -124,6 +124,40 @@ pbs-backup:
     schedule-permission: system
 YAML
 
+echo "=== Step 10: Install PVE config backup script ==="
+mkdir -p /etc/proxmox-backup-restore
+cp "${SCRIPT_DIR}/config.env" /etc/proxmox-backup-restore/config.env
+cp "${SCRIPT_DIR}/backup-pve-config.sh" /usr/local/bin/backup-pve-config.sh
+chmod +x /usr/local/bin/backup-pve-config.sh
+
+cat > /etc/systemd/system/pve-config-backup.service << SERVICE
+[Unit]
+Description=Proxmox host config backup to Google Drive
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-pve-config.sh
+StandardOutput=journal
+StandardError=journal
+SERVICE
+
+cat > /etc/systemd/system/pve-config-backup.timer << TIMER
+[Unit]
+Description=Daily Proxmox config backup timer
+
+[Timer]
+OnCalendar=${CONFIG_BACKUP_SCHEDULE}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+TIMER
+
+systemctl daemon-reload
+systemctl enable --now pve-config-backup.timer
+echo "Config backup timer enabled (${CONFIG_BACKUP_SCHEDULE} daily)"
+
 echo ""
 echo "=== restore-1-install.sh COMPLETE ==="
 echo ""
