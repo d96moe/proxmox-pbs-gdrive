@@ -27,8 +27,11 @@ fi
 source "${SCRIPT_DIR}/config.env"
 
 echo "=== Configuration loaded ==="
-echo "  PBS datastore:    ${PBS_DATASTORE_PATH} (${PBS_DATASTORE_SIZE})"
-echo "  LVM:              ${PBS_LVM_VG}/${PBS_LVM_THIN_POOL} -> ${PBS_LVM_VOL_NAME}"
+echo "  Storage type:     ${STORAGE_TYPE}"
+echo "  PBS datastore:    ${PBS_DATASTORE_PATH}"
+if [ "${STORAGE_TYPE}" = "lvm-thin" ]; then
+    echo "  LVM:              ${PBS_LVM_VG}/${PBS_LVM_THIN_POOL} -> ${PBS_LVM_VOL_NAME} (${PBS_DATASTORE_SIZE})"
+fi
 echo "  Google Drive:     ${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}"
 echo ""
 read -p "Does this look correct? Press Enter to continue or Ctrl+C to abort..."
@@ -50,14 +53,25 @@ curl -sfL https://raw.githubusercontent.com/creativeprojects/resticprofile/maste
 mv bin/resticprofile /usr/local/bin/
 resticprofile version
 
-echo "=== Step 5: Create LVM thin volume for PBS datastore ==="
-lvcreate -V${PBS_DATASTORE_SIZE} -T ${PBS_LVM_VG}/${PBS_LVM_THIN_POOL} -n ${PBS_LVM_VOL_NAME}
-mkfs.ext4 -m 0 /dev/${PBS_LVM_VG}/${PBS_LVM_VOL_NAME}
-mkdir -p ${PBS_DATASTORE_PATH}
-echo "/dev/${PBS_LVM_VG}/${PBS_LVM_VOL_NAME} ${PBS_DATASTORE_PATH} ext4 defaults,noatime 0 0" \
-    >> /etc/fstab
-systemctl daemon-reload
-mount ${PBS_DATASTORE_PATH}
+echo "=== Step 5: Prepare PBS datastore storage ==="
+if [ "${STORAGE_TYPE}" = "lvm-thin" ]; then
+    echo "  Creating LVM thin volume ${PBS_LVM_VOL_NAME} (${PBS_DATASTORE_SIZE})..."
+    lvcreate -V${PBS_DATASTORE_SIZE} -T ${PBS_LVM_VG}/${PBS_LVM_THIN_POOL} -n ${PBS_LVM_VOL_NAME}
+    mkfs.ext4 -m 0 /dev/${PBS_LVM_VG}/${PBS_LVM_VOL_NAME}
+    mkdir -p ${PBS_DATASTORE_PATH}
+    echo "/dev/${PBS_LVM_VG}/${PBS_LVM_VOL_NAME} ${PBS_DATASTORE_PATH} ext4 defaults,noatime 0 0" \
+        >> /etc/fstab
+    systemctl daemon-reload
+    mount ${PBS_DATASTORE_PATH}
+    echo "  LVM volume created and mounted at ${PBS_DATASTORE_PATH}"
+elif [ "${STORAGE_TYPE}" = "dir" ]; then
+    echo "  Creating plain directory at ${PBS_DATASTORE_PATH}..."
+    mkdir -p ${PBS_DATASTORE_PATH}
+    echo "  Directory created (no LVM, no fstab entry needed)"
+else
+    echo "ERROR: Unknown STORAGE_TYPE '${STORAGE_TYPE}' — must be 'lvm-thin' or 'dir'"
+    exit 1
+fi
 
 echo "=== Step 6: Create PBS datastore ==="
 proxmox-backup-manager datastore create ${PBS_DATASTORE_NAME} ${PBS_DATASTORE_PATH}
