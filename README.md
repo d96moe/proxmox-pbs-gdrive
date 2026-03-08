@@ -221,6 +221,11 @@ You need a **Desktop app** OAuth client in Google Cloud Console. Do this from an
 9. Click **Create**
 10. Copy the **Client ID** and **Client Secret** — you will need these in the next step
 
+> ℹ️ If you already have an OAuth client ID from a previous setup, you can reuse the same
+> **Client ID**. However, Google does not show the Client Secret again after creation.
+> To get a new secret: go to **Credentials → click the edit (pencil) icon** on your existing
+> OAuth client → **Add secret** (or download the JSON). You do NOT need to create a new client.
+
 > ⚠️ If prompted to configure OAuth consent screen: choose **External**, fill in app name
 > (e.g. "rclone"), add your Gmail address as both developer and test user, save and continue.
 
@@ -263,7 +268,7 @@ This opens a browser window — log in with your Google account and click Allow.
 Copy the resulting token (long JSON string) and paste it back into the PVE server terminal.
 
 ```
-n          # Not a shared/team drive
+n          # Not a shared/team drive — answer n even if you use Google Workspace!
 y          # Confirm and save
 q          # Quit config
 ```
