@@ -126,7 +126,7 @@ proxmox-backup-manager datastore create ${PBS_DATASTORE_NAME} ${PBS_DATASTORE_PA
 echo "=== Step 7: Create PBS user and ACL ==="
 proxmox-backup-manager user create ${PBS_USER} --password "${PBS_USER_PASSWORD}"
 proxmox-backup-manager user generate-token ${PBS_USER} ${PBS_TOKEN_NAME}
-proxmox-backup-manager acl update /datastore/${PBS_DATASTORE_NAME} DatastoreBackup \
+proxmox-backup-manager acl update /datastore/${PBS_DATASTORE_NAME} DatastoreAdmin \
     --auth-id ${PBS_USER}
 
 echo "=== Step 8: Create stop-proxmox-backup.sh ==="

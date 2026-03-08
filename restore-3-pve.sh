@@ -29,11 +29,11 @@ proxmox-backup-manager datastore remove ${PBS_DATASTORE_NAME} 2>/dev/null || tru
 proxmox-backup-manager datastore create ${PBS_DATASTORE_NAME} ${PBS_DATASTORE_PATH}
 
 echo "=== Step 3: Set ACL for backup user ==="
-proxmox-backup-manager acl update /datastore/${PBS_DATASTORE_NAME} DatastoreBackup \
+proxmox-backup-manager acl update /datastore/${PBS_DATASTORE_NAME} DatastoreAdmin \
     --auth-id ${PBS_USER}
 
 echo "=== Step 4: Get PBS fingerprint ==="
-FINGERPRINT=$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint" | awk '{print $2}')
+FINGERPRINT=$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (sha256):" | awk '{print $NF}')
 echo "PBS Fingerprint: ${FINGERPRINT}"
 
 echo "=== Step 5: Add PBS storage to PVE ==="
