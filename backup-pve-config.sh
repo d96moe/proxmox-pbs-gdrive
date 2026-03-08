@@ -46,6 +46,7 @@ tar -czf "${TARBALL}" \
     /usr/local/bin/stop-proxmox-backup.sh \
     /usr/local/bin/backup-pve-config.sh \
     /etc/proxmox-backup-restore/ \
+    /boot/firmware/config.txt \
     2>/dev/null || true
 
 echo "    Tarball size: $(du -sh ${TARBALL} | cut -f1)"
