@@ -8,6 +8,11 @@
 #   - Run as root on PVE host
 #   - EDIT config.env BEFORE running this script!
 #
+# Supports:
+#   - x86_64: standard Proxmox VE install with LVM thin-pool
+#   - aarch64: Proxmox on Debian (e.g. Raspberry Pi 5), dir-based storage
+#              Uses community ARM64 PBS build (pipbs)
+#
 # After this script:
 #   1. Run: rclone config  (see README for detailed instructions)
 #   2. Save restic password to /etc/resticprofile/restic-password
@@ -17,6 +22,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ARCH="$(uname -m)"
 
 # Load configuration
 if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
@@ -27,6 +33,7 @@ fi
 source "${SCRIPT_DIR}/config.env"
 
 echo "=== Configuration loaded ==="
+echo "  Architecture:     ${ARCH}"
 echo "  Storage type:     ${STORAGE_TYPE}"
 echo "  PBS datastore:    ${PBS_DATASTORE_PATH}"
 if [ "${STORAGE_TYPE}" = "lvm-thin" ]; then
@@ -36,9 +43,49 @@ echo "  Google Drive:     ${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_
 echo ""
 read -p "Does this look correct? Press Enter to continue or Ctrl+C to abort..."
 
+# -----------------------------------------------------------------------------
+# ARM64 (Raspberry Pi): check 4k page-size — required for PBS
+# -----------------------------------------------------------------------------
+if [ "${ARCH}" = "aarch64" ]; then
+    PAGE_SIZE="$(getconf PAGE_SIZE)"
+    if [ "${PAGE_SIZE}" != "4096" ]; then
+        echo ""
+        echo "=== ⚠️  ARM64: Wrong kernel page-size detected! ==="
+        echo "  Current page size: ${PAGE_SIZE} (need 4096)"
+        echo "  PBS requires a 4k page-size kernel."
+        echo "  Raspberry Pi 5 ships with a 16k kernel by default."
+        echo ""
+        echo "  Fix: Add 'kernel=kernel8.img' to /boot/firmware/config.txt"
+        echo "  Then reboot and run this script again."
+        echo ""
+        read -p "Add kernel=kernel8.img and reboot now? (y/N) " confirm
+        if [ "${confirm}" = "y" ] || [ "${confirm}" = "Y" ]; then
+            echo "kernel=kernel8.img" >> /boot/firmware/config.txt
+            echo "Rebooting in 5 seconds... Run this script again after reboot."
+            sleep 5
+            reboot
+        else
+            echo "Aborting. Fix page-size manually and re-run."
+            exit 1
+        fi
+    fi
+    echo "  Page size: ${PAGE_SIZE} ✓"
+fi
+
 echo "=== Step 1: Install Proxmox Backup Server ==="
-echo "deb http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription" \
-    > /etc/apt/sources.list.d/pbs.list
+if [ "${ARCH}" = "aarch64" ]; then
+    echo "  ARM64 detected — using community pipbs repository..."
+    apt-get install -y ca-certificates curl gnupg
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/pipbs.gpg
+    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ trixie main" \
+        > /etc/apt/sources.list.d/pipbs.list
+else
+    echo "  x86_64 detected — using official Proxmox repository..."
+    echo "deb http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription" \
+        > /etc/apt/sources.list.d/pbs.list
+fi
 apt-get update
 apt-get install -y proxmox-backup-server
 
