@@ -144,197 +144,223 @@ monthly snapshots on Google Drive cost very little additional storage.
 
 ## ⚠️ BEFORE YOU RUN ANYTHING — Edit config.env
 
-All scripts source a single `config.env` file. **You must review and edit this file
-before running any script.** The defaults are set for the home Proxmox instance.
+All scripts source a single `config.env` file. Pre-configured templates are available:
 
-Open `config.env` and verify/change the following:
-
-| Variable | Default | Change for cabin? | Description |
-|---|---|---|---|
-| `PBS_DATASTORE_SIZE` | `350G` | **YES** → `100G` | Size of LVM volume for PBS |
-| `PBS_LVM_VG` | `pve` | Verify with `vgs` | LVM volume group |
-| `PBS_LVM_THIN_POOL` | `data` | Verify with `lvs` | LVM thin pool |
-| `PBS_USER_PASSWORD` | `changeme` | **YES — always** | Set a strong password! |
-| `RESTICPROFILE_GDRIVE_PATH` | `bu/proxmox_home` | **YES** → `bu/proxmox_cabin` | Google Drive restic repo path |
-| `GDRIVE_CONFIG_FOLDER` | `proxmox_home_config` | **YES** → `proxmox_cabin_config` | Google Drive config backup folder |
-
-To verify LVM names on your system before editing:
 ```bash
-vgs   # shows volume group names
-lvs   # shows logical volume and pool names
+cp config_home.env config.env    # Home Proxmox (x86_64, LVM)
+cp config_cabin.env config.env   # Cabin Pi5 (aarch64, dir)
 ```
 
----
+Key variables to review:
 
-## Disaster Recovery Procedure
-
-### Prerequisites
-
-Before running the scripts you need:
-- A fresh Proxmox VE installation on new hardware
-- Network configured (same hostname/IP recommended)
-- Internet access to reach Google Drive
-- Your restic repository password (store this somewhere safe, e.g. a password manager!)
+| Variable | Home | Cabin | Description |
+|---|---|---|---|
+| `STORAGE_TYPE` | `lvm-thin` | `dir` | Storage backend type |
+| `PBS_DATASTORE_SIZE` | `350G` | n/a | Size of LVM volume |
+| `PBS_USER_PASSWORD` | `changeme` | `changeme` | **Always change this!** |
+| `RESTICPROFILE_GDRIVE_PATH` | `bu/proxmox_home` | `bu/proxmox_cabin` | GDrive restic repo |
+| `GDRIVE_CONFIG_FOLDER` | `proxmox_home_config` | `proxmox_cabin_config` | GDrive config backup |
 
 ---
 
-### Step 0: Manual — Install Proxmox VE
+## Scenario A: Fresh Setup (first time, no existing backup)
 
-1. Download Proxmox VE ISO from https://www.proxmox.com/downloads
-2. Boot from ISO and install
-3. Configure network (hostname, IP, gateway, DNS)
-4. SSH in as root
-5. Clone or copy this repo to the server:
+Use this when setting up a new Proxmox instance from scratch.
+
+### A1: Install Proxmox VE
+
+1. Download Proxmox VE ISO from https://www.proxmox.com/downloads (x86_64)
+   or set up Proxmox on Debian (aarch64/Pi5 — see community guides)
+2. Configure network (hostname, IP, gateway, DNS)
+3. SSH in as root and clone this repo:
    ```bash
    apt-get install -y git
-   git clone https://github.com/YOUR-USERNAME/proxmox-backup-restore.git
+   git clone https://github.com/d96moe/proxmox-backup-restore.git
    cd proxmox-backup-restore
+   chmod +x *.sh
    ```
 
----
-
-### Step 1: Edit config.env, then run restore-1-install.sh
-
-See the table above. Edit `config.env` first, then:
+### A2: Edit config.env and run restore-1-install.sh
 
 ```bash
-chmod +x restore-1-install.sh
+cp config_home.env config.env   # or config_cabin.env
+nano config.env                 # set PBS_USER_PASSWORD at minimum
 ./restore-1-install.sh
 ```
 
-The script will print your configuration and ask you to confirm before doing anything.
+> ⚠️ **Raspberry Pi 5 only:** The script detects if the kernel uses 16k page-size
+> (incompatible with PBS) and offers to fix it and reboot automatically.
+> Run the script again after reboot.
 
-**After script completes:**
+### A3: Configure rclone (Google Drive)
 
-#### A) Create Google OAuth credentials (one-time setup, skip if you already have these)
+#### Create Google OAuth credentials (one-time, skip if you already have these)
 
-You need a **Desktop app** OAuth client in Google Cloud Console. Do this from any browser:
+1. Go to https://console.cloud.google.com → select your project
+2. **APIs & Services → Library** → search **Google Drive API** → Enable
+3. **APIs & Services → Credentials** → **+ Create Credentials → OAuth client ID**
+4. Application type: **Desktop app**, name: `rclone` → Create
+5. Copy **Client ID** and **Client Secret**
 
-1. Go to https://console.cloud.google.com
-2. Select your project (or create a new one)
-3. Navigate to **APIs & Services → Library**
-4. Search for **Google Drive API** and click **Enable**
-5. Navigate to **APIs & Services → Credentials**
-6. Click **+ Create Credentials → OAuth client ID**
-7. Application type: **Desktop app**
-8. Name: `rclone` (or anything)
-9. Click **Create**
-10. Copy the **Client ID** and **Client Secret** — you will need these in the next step
+> ℹ️ Reusing an existing OAuth client? You can reuse the same Client ID.
+> Google doesn't show the secret again — go to **Credentials → pencil icon → Add secret**.
 
-> ℹ️ If you already have an OAuth client ID from a previous setup, you can reuse the same
-> **Client ID**. However, Google does not show the Client Secret again after creation.
-> To get a new secret: go to **Credentials → click the edit (pencil) icon** on your existing
-> OAuth client → **Add secret** (or download the JSON). You do NOT need to create a new client.
+> ⚠️ OAuth consent screen: choose **External**, add your Gmail as developer and test user.
 
-> ⚠️ If prompted to configure OAuth consent screen: choose **External**, fill in app name
-> (e.g. "rclone"), add your Gmail address as both developer and test user, save and continue.
+#### Run rclone config on the PVE server
 
-#### B) Configure rclone on the PVE server
+The server has no browser — install rclone on a second machine (https://rclone.org/downloads/).
 
-Since the PVE server has no browser, you need a second machine (Windows/Mac/Linux with
-a browser) with rclone installed (https://rclone.org/downloads/).
-
-On the **PVE server**, run:
-
+On the **PVE server**:
 ```bash
 rclone config
 ```
 
-Follow the prompts:
-
+Prompts:
 ```
 n          # New remote
 gdrive     # Name — must match RESTICPROFILE_GDRIVE_REMOTE in config.env
 drive      # Type: Google Drive
-           # Paste your Client ID from step A
-           # Paste your Client Secret from step A
+           # Paste Client ID
+           # Paste Client Secret
 1          # Scope: full access
            # Leave blank (no service account file)
 n          # No advanced config
 n          # No auto browser auth (server has no browser)
 ```
 
-rclone will now print a command like:
-```
-rclone authorize "drive" "<YOUR-UNIQUE-TOKEN-STRING>"
-```
-
-Copy the **exact command** from your terminal. On your **Windows/Mac machine**, paste and run it:
-```
-rclone authorize "drive" "<YOUR-UNIQUE-TOKEN-STRING>"
-```
-
-This opens a browser window — log in with your Google account and click Allow.
-Copy the resulting token (long JSON string) and paste it back into the PVE server terminal.
+rclone prints a command — copy it to your **Windows/Mac machine** and run it there.
+A browser opens — log in with your Google account and click Allow.
+Copy the resulting JSON token and paste it back in the server terminal.
 
 ```
 n          # Not a shared/team drive — answer n even if you use Google Workspace!
 y          # Confirm and save
-q          # Quit config
+q          # Quit
 ```
 
-#### C) Verify rclone works
-
+Verify:
 ```bash
 rclone lsd gdrive:bu
-# Should list folders including proxmox_home (or proxmox_cabin)
 ```
 
-#### D) Save restic password
+### A4: Save restic password and init repo
 
 ```bash
 echo 'YOUR-RESTIC-PASSWORD' > /etc/resticprofile/restic-password
 chmod 600 /etc/resticprofile/restic-password
+resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup init
 ```
 
-> ⚠️ This password is required to access the backup. Store it in a password manager!
+> ⚠️ Store this password in a password manager — losing it means losing access to backups!
 
----
+### A5: Run restore-3-pve.sh
 
-### Step 2: Run restore-2-auth.sh
-
-This script:
-1. Verifies rclone access to Google Drive
-2. **Downloads and extracts the latest PVE config tarball** — this restores rclone auth,
-   restic password, PBS config, network config and all custom scripts automatically
-3. Restores the full PBS datastore from the restic repo on Google Drive
+Adds PBS as storage in PVE and activates nightly schedules:
 
 ```bash
-chmod +x restore-2-auth.sh
-./restore-2-auth.sh
-```
-
-⚠️ Downloading the PBS datastore (~190GB+) takes several hours.
-The config tarball itself is only a few MB and downloads in seconds.
-
----
-
-### Step 3: Run restore-3-pve.sh
-
-Configures PBS, sets up PVE storage integration and activates nightly schedules.
-
-```bash
-chmod +x restore-3-pve.sh
 ./restore-3-pve.sh
 ```
 
+### A6: Run first manual backup
+
+```bash
+# PBS backup of all VMs/LXCs
+pvesh create /nodes/$(hostname)/vzdump --all 1 --storage pbs-local --mode snapshot --compress zstd
+
+# restic backup of PBS datastore to Google Drive
+resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup backup
+```
+
+> ℹ️ First restic backup uploads the full PBS datastore — takes time depending on
+> connection speed. Subsequent nightly backups are incremental and much faster.
+
 ---
 
-### Step 4: Manual — Restore VMs/LXCs via Proxmox GUI
+## Scenario B: Disaster Recovery (restoring from existing backup)
 
-> ⚠️ After a full disaster recovery there are no VMs or LXCs yet — so you cannot
-> navigate to a VM and click its Backup tab. Instead, browse the PBS storage directly:
+Use this when replacing failed hardware. You already have backups in Google Drive.
+
+> ℹ️ No need to set up rclone/OAuth manually — your existing rclone config and restic
+> password are stored in the config tarball on Google Drive. Just download it first.
+
+### B1: Install Proxmox VE
+
+Same as A1.
+
+### B2: Download config tarball via browser
+
+On any computer with a browser:
+
+1. Go to https://drive.google.com
+2. Navigate to `bu/proxmox_home_config/` (or `proxmox_cabin_config/`)
+3. Download the latest `pve-config-YYYY-MM-DD.tar.gz`
+
+Copy it to the new Proxmox server and extract:
+```bash
+scp pve-config-YYYY-MM-DD.tar.gz root@YOUR-PVE-IP:/root/
+ssh root@YOUR-PVE-IP
+tar -xzf /root/pve-config-YYYY-MM-DD.tar.gz -C /
+```
+
+This restores rclone config, restic password, resticprofile config, network settings
+and all custom scripts — everything needed to reach Google Drive and decrypt backups.
+
+Verify rclone works:
+```bash
+rclone lsd gdrive:bu
+```
+
+### B3: Edit config.env and run restore-1-install.sh
+
+```bash
+cd proxmox-backup-restore
+nano config.env   # verify settings — rclone is already configured from tarball
+./restore-1-install.sh
+```
+
+### B4: Run restore-2-auth.sh
+
+Downloads and restores the full PBS datastore from Google Drive:
+
+```bash
+./restore-2-auth.sh
+```
+
+> ⚠️ Downloading the PBS datastore takes several hours (size depends on your setup).
+
+### B5: Run restore-3-pve.sh
+
+```bash
+./restore-3-pve.sh
+```
+
+### B6: Restore VMs/LXCs via Proxmox GUI
+
+> ⚠️ After a full recovery there are no VMs yet — navigate to PBS storage directly:
 
 1. Open Proxmox web GUI
-2. Go to **Datacenter → Storage → pbs-local**
-3. Click the **Content** tab
-4. All snapshots from the PBS datastore are listed here, regardless of whether the VMs exist
-5. Select a snapshot and click **Restore**
-6. Enter the VM/LXC ID to restore it as (use the original ID or a new one)
-7. Repeat for each VM/LXC you want to restore
+2. Go to **Datacenter → Storage → pbs-local → Content** tab
+3. All PBS snapshots are listed here regardless of whether the VMs exist
+4. Select a snapshot → **Restore** → enter the VM/LXC ID
+5. Repeat for each VM/LXC
 
-If you only want to restore a single VM (not a full recovery), you can also navigate
-to that VM → **Backup** tab → select `pbs-local` in the dropdown (top right) → Restore.
+---
+
+## Verified versions
+
+Tested and working with these versions. Document for future reference — scripts are not
+locked to these versions but use this as a baseline if something stops working.
+
+| Component | Home (x86_64) | Cabin (aarch64/Pi5) |
+|---|---|---|
+| Proxmox VE | 9.1.4 | 9.0.10-2 |
+| Proxmox Backup Server | 4.1.4-1 | 4.1.4-1 (pipbs community build) |
+| rclone | 1.73.1 | 1.73.2 |
+| restic | 0.18.0 | 0.18.0 |
+| resticprofile | 0.32.0 | 0.32.0 |
+| OS | Debian 13.3 (bookworm) | Raspbian 13.3 (trixie) |
+| Kernel | 6.17.4-2-pve | 6.12.62+rpt-rpi-v8 (4k page-size) |
 
 ---
 
