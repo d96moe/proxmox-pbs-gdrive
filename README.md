@@ -4,6 +4,25 @@ Disaster recovery and setup scripts for Proxmox VE with PBS + restic + rclone �
 
 Supports both x86_64 (standard PVE install) and aarch64 (Raspberry Pi 5 with community ARM64 builds).
 
+## Tested With
+
+| Component | x86_64 standard | Raspberry Pi 5 (aarch64) |
+|---|---|---|
+| Proxmox VE | 9.1.4 | 9.0.10-2 (pxvirt) |
+| PBS | 4.1.4-1 (official) | 4.1.4-1 (pipbs) |
+| rclone | 1.73.1 | 1.73.2 |
+| restic | 0.18.0 | 0.18.0 |
+| resticprofile | latest at install | latest at install |
+| Debian (base) | Bookworm | Trixie |
+| Hardware | Any x86_64 with NVMe (tested: Minisforum Ryzen AI HX 370) | Raspberry Pi 5 8GB, NVMe (tested: NVMe via USB adapter) |
+
+**ARM64 repos used on Pi5:**
+- PBS: [pipbs](https://github.com/dexogen/pipbs) (dexogen) — community ARM64 PBS build
+- QEMU/KVM: [pxvirt](https://download.lierfang.com/pxcloud/pxvirt) (lierfang) — community ARM64 PVE build
+
+> ⚠️ pipbs and pxvirt are community projects, not officially supported by Proxmox.
+> Keep their package versions in sync — mixing versions can cause GUI rendering issues.
+
 ## Architecture
 
 ```
@@ -72,8 +91,8 @@ The `restore-1-install.sh` script will:
 All scripts source a single `config.env` file. Pre-configured templates are available:
 
 ```bash
-cp config_home.env config.env    # Home Proxmox (x86_64, Minisforum)
-cp config_cabin.env config.env   # Cabin Pi5 (aarch64, Raspberry Pi 5)
+cp config_x86_standard.env config.env    # x86_64 standard setup
+cp config_rpi5.env config.env            # Raspberry Pi 5 (aarch64)
 ```
 
 Key variables to set:
@@ -118,7 +137,7 @@ apt-get install -y git
 git clone https://github.com/d96moe/proxmox-backup-restore.git
 cd proxmox-backup-restore
 chmod +x *.sh
-cp config_home.env config.env   # or config_cabin.env
+cp config_x86_standard.env config.env   # or config_rpi5.env
 nano config.env                 # set PBS_PARTITION and PBS_USER_PASSWORD at minimum
 ```
 
@@ -271,7 +290,7 @@ apt-get install -y git
 git clone https://github.com/d96moe/proxmox-backup-restore.git
 cd proxmox-backup-restore
 chmod +x *.sh
-cp config_home.env config.env   # or config_cabin.env
+cp config_x86_standard.env config.env   # or config_rpi5.env
 nano config.env                 # verify PBS_PARTITION matches new hardware, check password
 ./restore-1-install.sh
 ```
