@@ -1,165 +1,92 @@
 # proxmox-backup-restore
 
-Disaster recovery scripts for Proxmox VE with PBS + restic + rclone → Google Drive.
+Disaster recovery and setup scripts for Proxmox VE with PBS + restic + rclone → Google Drive.
+
+Supports both x86_64 (standard PVE install) and aarch64 (Raspberry Pi 5 with community ARM64 builds).
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Proxmox VE Host                         │
-│                                                              │
-│  ┌──────────────┐  02:00   ┌──────────────────────────────┐ │
-│  │  VMs & LXCs  │─backup──▶│  PBS (Proxmox Backup Server) │ │
-│  │              │          │  /mnt/pbs  (LVM thin volume)  │ │
-│  │  vm/100 Win  │          │  dedup + compressed chunks    │ │
-│  │  vm/101 HAOS │          │  retention: last 3, daily 7,  │ │
-│  │  vm/102 LLM  │          │  weekly 4                     │ │
-│  │  ct/10x LXCs │          └──────────────┬───────────────┘ │
-│  └──────────────┘                         │                  │
-│                                      02:30 PBS stopped       │
-│                                           │                  │
-│                          ┌────────────────▼──────────────┐  │
-│                          │  restic                        │  │
-│                          │  reads PBS chunks as-is        │  │
-│                          │  no re-compression needed      │  │
-│                          └────────────────┬──────────────┘  │
-│                                      PBS restarted           │
-│                                           │                  │
-│  ┌─────────────────────────┐  04:00       │                  │
-│  │  PVE host config        │──────────────┤                  │
-│  │  /etc/pve/              │  rclone      │                  │
-│  │  /root/.config/rclone/  │  direct      │                  │
-│  │  /etc/resticprofile/    │              │                  │
-│  │  /etc/network/ etc      │              │                  │
-│  └─────────────────────────┘              │                  │
-└──────────────────────────────────────────┼──────────────────┘
-                                           │
-                          ┌────────────────▼──────────────┐
-                          │  Google Drive                  │
-                          │                                │
-                          │  bu/proxmox_home/              │
-                          │    restic repo                 │
-                          │    retention: last 3, daily 6, │
-                          │    weekly 3, monthly 5         │
-                          │                                │
-                          │  bu/proxmox_home_config/       │
-                          │    pve-config-YYYY-MM-DD.tar.gz│
-                          │    last 7 days kept            │
-                          └────────────────────────────────┘
+Proxmox VE
+    └── PBS (Proxmox Backup Server)
+            ├── /mnt/pbs  ← dedicated partition (own partition, never shared with OS/VMs)
+            └── restic (nightly) → rclone → Google Drive
 ```
 
 - **PBS** handles incremental, deduplicated VM/LXC backups locally
-- **restic** snapshots the PBS datastore to Google Drive nightly
+- **restic** snapshots the full PBS datastore to Google Drive nightly
 - **rclone** provides the Google Drive transport for restic
-
----
-
-## How it works & why
-
-### Why not just rclone directly to Google Drive?
-
-The obvious approach — pointing rclone directly at the PBS datastore and syncing to
-Google Drive — is known to break PBS. PBS stores backups as thousands of small chunk
-files in a `.chunks/` directory, and relies on precise file metadata (atime, permissions,
-ownership) to maintain the integrity of its deduplication index. rclone's sync operations
-update atime and can alter permissions, which silently corrupts the chunk index. This is a
-well-documented issue confirmed by multiple users in the Proxmox community.
-
-### Why PBS + restic?
-
-The solution is to use restic as a middle layer:
-
-- **PBS** runs locally and does what it does best: incremental, deduplicated, compressed
-  VM/LXC backups with a clean restore UI in Proxmox. Multiple restore points (last 3,
-  daily for a week, weekly for a month) without multiplying disk usage thanks to deduplication.
-
-- **restic** treats the entire PBS datastore as an opaque collection of files and backs it
-  up to Google Drive. It never modifies the source, so PBS internals stay intact.
-
-- **rclone** is used purely as a transport layer by restic, handling the Google Drive
-  OAuth and API communication.
-
-### Why stop PBS during the restic backup?
-
-PBS must be stopped before restic takes its snapshot. If PBS is writing new chunks or
-updating index files while restic reads the datastore, the result is an inconsistent
-snapshot that cannot be restored. The `stop-proxmox-backup.sh` script waits until PBS
-has no running tasks, stops it, lets restic run, then automatically restarts PBS when
-done — or if it fails.
-
-The nightly window looks like this:
-
-```
-02:00  PBS backup starts    (all VMs/LXCs backed up to local datastore)
-02:30  restic starts        (PBS stopped -> snapshot to Google Drive -> PBS restarted)
-03:00  PBS prune runs       (old local snapshots removed per retention policy)
-03:30  restic forget runs   (old Google Drive snapshots removed per retention policy)
-```
-
-### What does incremental backup mean here?
-
-There are two levels of incrementality:
-
-**PBS level:** After the first backup, PBS only transfers changed blocks from each VM/LXC
-disk. A 512GB Ollama VM with 86% empty space takes ~12 minutes the first time; subsequent
-nightly backups take seconds to minutes if little has changed.
-
-**restic level:** After the first upload to Google Drive (several hours), restic only
-uploads new PBS chunks — the data from VMs that changed since last night. A typical
-nightly restic run uploads a few hundred MB rather than the full datastore.
-
-### Storage sizing
-
-Because PBS already deduplicates and compresses, restic finds almost nothing to compress
-further. restic copies PBS chunks as-is, so each restic snapshot on Google Drive is
-the same size as the local PBS datastore at that point in time.
-
-The two retention policies are deliberately different:
-
-| | Local PBS | Google Drive (restic) |
-|---|---|---|
-| keep-last | 3 | 3 |
-| keep-daily | 7 | 6 |
-| keep-weekly | 4 | 3 |
-| keep-monthly | — | 5 |
-
-Google Drive keeps monthly snapshots for 5 months, giving longer history for disaster
-recovery. Local PBS keeps fewer snapshots to conserve disk space on the NVMe datastore.
-Since restic is incremental and PBS chunks are shared between snapshots, the extra
-monthly snapshots on Google Drive cost very little additional storage.
-
----
+- **PBS is stopped** during restic snapshot to ensure consistency
 
 ## Backup Schedule
 
 | Time  | Job |
 |-------|-----|
-| 02:00 | PBS backup all VMs/LXCs → local datastore |
-| 02:30 | restic: PBS stopped → snapshot to Google Drive → PBS restarted |
-| 03:00 | PBS prune (keep-last=3, keep-daily=7, keep-weekly=4) |
-| 03:30 | restic forget (keep-last=3, keep-daily=6, keep-weekly=3, keep-monthly=5) |
-| 04:00 | PVE host config backup → Google Drive (rclone direct, keep 7 days) |
+| 02:00 | PBS backup all VMs/LXCs (via PVE schedule) |
+| 02:30 | restic snapshot PBS datastore → Google Drive |
+| 03:00 | PBS prune (local retention) |
+| 03:30 | restic forget (Google Drive retention) |
+| 04:00 | PVE host config tarball → Google Drive |
+
+## Retention
+
+| Storage | Retention |
+|---------|-----------|
+| PBS local | keep-last=3, keep-daily=3 |
+| Google Drive (restic) | keep-last=3, keep-daily=6, keep-weekly=3, keep-monthly=5 |
+
+Local retention is intentionally short — Google Drive handles long-term retention.
 
 ---
 
-## ⚠️ BEFORE YOU RUN ANYTHING — Edit config.env
+## ⚠️ Before You Start — PBS Partition
+
+PBS **must** be on its own dedicated partition. It cannot share a partition with the OS or VMs.
+
+**Why:** PBS manages its own chunk store and assumes exclusive, predictable disk access.
+Sharing a partition risks data loss if the OS or VMs fill up the disk.
+
+**Minimum size:** 15% of total disk. In practice, ~20-30% is recommended.
+
+You must create and format the partition **before** running any scripts:
+
+```bash
+# Example: create a new partition on /dev/sda after shrinking existing partitions
+parted /dev/sda mkpart primary ext4 <start_sector>s <end_sector>s
+mkfs.ext4 -m 0 /dev/sda3
+
+# Get the partition UUID (you'll need this for config.env)
+blkid /dev/sda3
+```
+
+The `restore-1-install.sh` script will:
+- Verify the partition exists and is a block device
+- Verify it is NOT the root partition
+- Warn if it is smaller than 15% of total disk
+- Add it to `/etc/fstab` and mount it automatically
+
+---
+
+## ⚠️ Before You Start — Edit config.env
 
 All scripts source a single `config.env` file. Pre-configured templates are available:
 
 ```bash
-cp config_home.env config.env    # Home Proxmox (x86_64, LVM)
-cp config_cabin.env config.env   # Cabin Pi5 (aarch64, dir)
+cp config_home.env config.env    # Home Proxmox (x86_64, Minisforum)
+cp config_cabin.env config.env   # Cabin Pi5 (aarch64, Raspberry Pi 5)
 ```
 
-Key variables to review:
+Key variables to set:
 
-| Variable | Home | Cabin | Description |
-|---|---|---|---|
-| `STORAGE_TYPE` | `lvm-thin` | `dir` | Storage backend type |
-| `PBS_DATASTORE_SIZE` | `350G` | n/a | Size of LVM volume |
-| `PBS_USER_PASSWORD` | `changeme` | `changeme` | **Always change this!** |
-| `RESTICPROFILE_GDRIVE_PATH` | `bu/proxmox_home` | `bu/proxmox_cabin` | GDrive restic repo |
-| `GDRIVE_CONFIG_FOLDER` | `proxmox_home_config` | `proxmox_cabin_config` | GDrive config backup |
+| Variable | Description |
+|---|---|
+| `PBS_PARTITION` | Dedicated PBS partition e.g. `/dev/sda3` or `/dev/nvme0n1p4` |
+| `PBS_DATASTORE_PATH` | Mount point for PBS partition, default `/mnt/pbs` |
+| `PBS_USER_PASSWORD` | **Always change this from `changeme`!** |
+| `PBS_RETENTION_LOCAL` | Local PBS retention, default `keep-last=3,keep-daily=3` |
+| `RESTICPROFILE_GDRIVE_PATH` | Google Drive restic repo path |
+| `GDRIVE_CONFIG_FOLDER` | Google Drive config backup folder |
+| `RESTIC_RETENTION_KEEP_*` | Remote retention settings |
 
 ---
 
@@ -167,32 +94,54 @@ Key variables to review:
 
 Use this when setting up a new Proxmox instance from scratch.
 
-### A1: Install Proxmox VE
+### A0: Install Proxmox VE
 
-1. Download Proxmox VE ISO from https://www.proxmox.com/downloads (x86_64)
-   or set up Proxmox on Debian (aarch64/Pi5 — see community guides)
-2. Configure network (hostname, IP, gateway, DNS)
-3. SSH in as root and clone this repo:
-   ```bash
-   apt-get install -y git
-   git clone https://github.com/d96moe/proxmox-backup-restore.git
-   cd proxmox-backup-restore
-   chmod +x *.sh
-   ```
+**x86_64:**
+1. Download Proxmox VE ISO from https://www.proxmox.com/downloads
+2. Boot from ISO and install, configure network
+3. SSH in as root
 
-### A2: Edit config.env and run restore-1-install.sh
+**aarch64 (Raspberry Pi 5):**
+1. Install Debian on the Pi5
+2. Follow community guide to install Proxmox VE on top of Debian
+3. SSH in as root
+
+### A1: Create PBS partition
+
+Before running any scripts, create and format a dedicated partition for PBS.
+See the **PBS Partition** section above.
+
+### A2: Clone repo and edit config.env
 
 ```bash
+apt-get install -y git
+git clone https://github.com/d96moe/proxmox-backup-restore.git
+cd proxmox-backup-restore
+chmod +x *.sh
 cp config_home.env config.env   # or config_cabin.env
-nano config.env                 # set PBS_USER_PASSWORD at minimum
+nano config.env                 # set PBS_PARTITION and PBS_USER_PASSWORD at minimum
+```
+
+### A3: Run restore-1-install.sh
+
+```bash
 ./restore-1-install.sh
 ```
+
+The script will:
+- Run sanity checks on the PBS partition
+- Install PBS (official repo on x86_64, pipbs community repo on ARM64)
+- Install rclone, restic, resticprofile
+- Mount the PBS partition and add it to /etc/fstab
+- Create PBS datastore, user and ACL
+- Create resticprofile config with retention settings from config.env
+- Install and enable the daily PVE config backup timer
 
 > ⚠️ **Raspberry Pi 5 only:** The script detects if the kernel uses 16k page-size
 > (incompatible with PBS) and offers to fix it and reboot automatically.
 > Run the script again after reboot.
 
-### A3: Configure rclone (Google Drive)
+### A4: Configure rclone (Google Drive)
 
 #### Create Google OAuth credentials (one-time, skip if you already have these)
 
@@ -244,7 +193,7 @@ Verify:
 rclone lsd gdrive:bu
 ```
 
-### A4: Save restic password and init repo
+### A5: Save restic password and init repo
 
 ```bash
 echo 'YOUR-RESTIC-PASSWORD' > /etc/resticprofile/restic-password
@@ -252,17 +201,17 @@ chmod 600 /etc/resticprofile/restic-password
 resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup init
 ```
 
-> ⚠️ Store this password in a password manager — losing it means losing access to backups!
+> ⚠️ Store this password in a password manager — losing it means losing access to all backups!
 
-### A5: Run restore-3-pve.sh
+### A6: Run restore-3-pve.sh
 
-Adds PBS as storage in PVE and activates nightly schedules:
+Adds PBS as storage in PVE and activates nightly restic schedules:
 
 ```bash
 ./restore-3-pve.sh
 ```
 
-### A6: Run first manual backup
+### A7: Run first manual backup
 
 ```bash
 # PBS backup of all VMs/LXCs
@@ -272,8 +221,8 @@ pvesh create /nodes/$(hostname)/vzdump --all 1 --storage pbs-local --mode snapsh
 resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup backup
 ```
 
-> ℹ️ First restic backup uploads the full PBS datastore — takes time depending on
-> connection speed. Subsequent nightly backups are incremental and much faster.
+> ℹ️ First restic backup uploads the full PBS datastore — takes time depending on connection speed.
+> Subsequent nightly backups are incremental and much faster.
 
 ---
 
@@ -284,9 +233,13 @@ Use this when replacing failed hardware. You already have backups in Google Driv
 > ℹ️ No need to set up rclone/OAuth manually — your existing rclone config and restic
 > password are stored in the config tarball on Google Drive. Just download it first.
 
-### B1: Install Proxmox VE
+### B0: Install Proxmox VE
 
-Same as A1.
+Same as A0.
+
+### B1: Create PBS partition
+
+Same as A1 — create and format a dedicated PBS partition on the new hardware.
 
 ### B2: Download config tarball via browser
 
@@ -303,7 +256,7 @@ ssh root@YOUR-PVE-IP
 tar -xzf /root/pve-config-YYYY-MM-DD.tar.gz -C /
 ```
 
-This restores rclone config, restic password, resticprofile config, network settings
+This restores rclone config, restic password, resticprofile config, fstab, network settings
 and all custom scripts — everything needed to reach Google Drive and decrypt backups.
 
 Verify rclone works:
@@ -311,13 +264,19 @@ Verify rclone works:
 rclone lsd gdrive:bu
 ```
 
-### B3: Edit config.env and run restore-1-install.sh
+### B3: Clone repo, edit config.env, run restore-1-install.sh
 
 ```bash
+apt-get install -y git
+git clone https://github.com/d96moe/proxmox-backup-restore.git
 cd proxmox-backup-restore
-nano config.env   # verify settings — rclone is already configured from tarball
+chmod +x *.sh
+cp config_home.env config.env   # or config_cabin.env
+nano config.env                 # verify PBS_PARTITION matches new hardware, check password
 ./restore-1-install.sh
 ```
+
+> ℹ️ rclone is already configured from the extracted tarball — skip OAuth setup.
 
 ### B4: Run restore-2-auth.sh
 
@@ -347,23 +306,6 @@ Downloads and restores the full PBS datastore from Google Drive:
 
 ---
 
-## Verified versions
-
-Tested and working with these versions. Document for future reference — scripts are not
-locked to these versions but use this as a baseline if something stops working.
-
-| Component | Home (x86_64) | Cabin (aarch64/Pi5) |
-|---|---|---|
-| Proxmox VE | 9.1.4 | 9.0.10-2 |
-| Proxmox Backup Server | 4.1.4-1 | 4.1.4-1 (pipbs community build) |
-| rclone | 1.73.1 | 1.73.2 |
-| restic | 0.18.0 | 0.18.0 |
-| resticprofile | 0.32.0 | 0.32.0 |
-| OS | Debian 13.3 (bookworm) | Raspbian 13.3 (trixie) |
-| Kernel | 6.17.4-2-pve | 6.12.62+rpt-rpi-v8 (4k page-size) |
-
----
-
 ## Verify Backup Health
 
 ```bash
@@ -385,9 +327,13 @@ df -i /mnt/pbs
 
 ## Notes
 
-- PBS datastore uses **ext4 with default inode ratio** — do NOT format with `-T largefile4`
-  as PBS creates many small chunk files and will run out of inodes
-- restic stores PBS chunks as-is (already deduplicated by PBS), so Google Drive
-  usage ≈ local PBS datastore size (not double)
-- First restic snapshot takes several hours; subsequent snapshots are incremental and fast
-- PBS is stopped during restic backup to ensure consistent snapshot
+- **PBS datastore uses ext4 with default inode ratio** — do NOT format with `-T largefile4`.
+  PBS creates millions of small chunk files and will run out of inodes with large-file tuning.
+- **restic stores PBS chunks as-is** (already deduplicated by PBS), so Google Drive usage
+  ≈ local PBS datastore size — not double.
+- **First restic snapshot** takes hours; subsequent snapshots are incremental and fast.
+- **pbs-enterprise.sources** is automatically removed after PBS install — this repo requires
+  a paid Proxmox subscription and causes 401 errors and potential package conflicts.
+- **ARM64 (Pi5):** uses [pipbs](https://github.com/dexogen/pipbs) community repo for PBS.
+  The pxvirt repo (lierfang) provides QEMU/KVM. Keep these repos separate — mixing versions
+  can cause GUI rendering issues in the Proxmox web interface.

@@ -46,7 +46,7 @@ pvesh create /storage \
     --password "${PBS_USER_PASSWORD}" \
     --fingerprint "${FINGERPRINT}" \
     --content backup \
-    --prune-backups "keep-last=3,keep-daily=7,keep-weekly=4"
+    --prune-backups "${PBS_RETENTION_LOCAL}"
 
 echo "=== Step 6: Register resticprofile schedules ==="
 resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup schedule
@@ -59,9 +59,8 @@ echo ""
 echo "=== restore-3-pve.sh COMPLETE ==="
 echo ""
 echo "All PBS snapshots should now be visible in Proxmox GUI:"
-echo "  1. Go to your VM/LXC -> Backup tab"
-echo "  2. Select storage '${PVE_PBS_STORAGE_ID}' in the dropdown (top right)"
-echo "  3. Select snapshot and click Restore"
+echo "  1. Go to Datacenter -> Storage -> ${PVE_PBS_STORAGE_ID} -> Content"
+echo "  2. Select snapshot and click Restore"
 echo ""
 echo "Verify nightly backup schedule:"
 echo "  systemctl list-timers | grep restic"
