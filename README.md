@@ -41,11 +41,19 @@ Proxmox VE
 
 | Time  | Job |
 |-------|-----|
-| 02:00 | PBS backup all VMs/LXCs (via PVE schedule) |
-| 02:30 | restic snapshot PBS datastore → Google Drive |
-| 03:00 | PBS prune (local retention) |
-| 03:30 | restic forget (Google Drive retention) |
-| 04:00 | PVE host config tarball → Google Drive |
+| 02:00 | PBS backup all VMs/LXCs (vzdump via PVE schedule) |
+| 03:00 | PBS prune (`nightly-prune` job, keep-last 3) |
+| 03:30 | PBS garbage collection (frees chunks pruned the night before) |
+| 04:00 | restic snapshot PBS datastore → Google Drive |
+
+**Why this order matters:**
+- Prune removes old snapshot index files but does not free disk space
+- GC runs after prune and actually frees the unreferenced chunks
+- restic runs last, uploading only the clean post-prune datastore
+- GC has a 24h chunk cutoff, so it always frees what *yesterday's* prune marked
+
+**Note:** restic has no separate `forget` schedule. PBS prune handles local retention.
+restic just snapshots whatever PBS keeps.
 
 ## Retention
 
@@ -121,9 +129,39 @@ Use this when setting up a new Proxmox instance from scratch.
 3. SSH in as root
 
 **aarch64 (Raspberry Pi 5):**
-1. Install Debian on the Pi5
-2. Follow community guide to install Proxmox VE on top of Debian
-3. SSH in as root
+
+Proxmox VE is not officially supported on ARM64 — installation requires community repos and a few extra steps. Use `install-proxmox-rpi5.sh` to automate this:
+
+1. Install Debian Trixie (64-bit) on the Pi5 using Raspberry Pi Imager
+2. SSH in as root and clone the repo:
+```bash
+apt-get install -y git
+git clone https://github.com/d96moe/proxmox-backup-restore.git
+cd proxmox-backup-restore
+chmod +x *.sh
+```
+3. Edit the configuration variables at the top of the script (hostname, IP, gateway, network interface):
+```bash
+nano install-proxmox-rpi5.sh
+```
+4. Run it:
+```bash
+./install-proxmox-rpi5.sh
+```
+
+The script will:
+- Set hostname and configure network bridge
+- Add pxvirt repo (community PVE ARM64 port) and pipbs repo (community PBS ARM64 build)
+- Install proxmox-ve, pve-qemu-kvm, proxmox-backup-server
+- Remove enterprise repos (avoid 401 errors)
+- Switch to 4k kernel (`kernel=kernel8.img`) — required for PBS on Pi5
+- Reboot
+
+After reboot, Proxmox GUI is available at `https://<IP>:8006`.
+
+> ⚠️ pxvirt and pipbs are community projects, not officially supported by Proxmox.
+> Keep their package versions in sync — mixing can cause GUI rendering issues.
+> Do NOT run `apt upgrade` without checking for version conflicts first.
 
 ### A1: Create PBS partition
 
