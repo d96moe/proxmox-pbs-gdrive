@@ -60,9 +60,11 @@ proxmox-backup-manager datastore update ${PBS_DATASTORE_NAME} \
     --gc-schedule "${PBS_GC_SCHEDULE}"
 
 echo "=== Step 7: Write resticprofile config ==="
-# Order: PBS BU (02:00, PVE GUI) → Prune (03:00) → GC (03:30) → restic (04:00)
-# restic stops PBS, backs up the clean pruned datastore, then starts PBS again
-# NOTE: no separate forget job — PBS prune handles local retention
+# Order: PBS BU (02:00) → Prune (03:00) → GC (03:30) → restic backup+forget (04:00)
+# restic stops PBS, snapshots the clean post-prune datastore, runs forget to
+# enforce Google Drive retention, then starts PBS again.
+# NOTE: forget has NO schedule — resticprofile runs it automatically after backup.
+#       PBS prune handles local retention; restic forget handles GDrive retention.
 cat > /etc/resticprofile/profiles.yaml << RESTICEOF
 version: "1"
 global:
@@ -83,6 +85,12 @@ pbs-backup:
     run-after-fail:
       - "systemctl start proxmox-backup"
       - "systemctl start proxmox-backup-proxy"
+  forget:
+    keep-last: ${RESTIC_RETENTION_KEEP_LAST}
+    keep-daily: ${RESTIC_RETENTION_KEEP_DAILY}
+    keep-weekly: ${RESTIC_RETENTION_KEEP_WEEKLY}
+    keep-monthly: ${RESTIC_RETENTION_KEEP_MONTHLY}
+    prune: true
 RESTICEOF
 
 echo "=== Step 8: Register resticprofile schedules ==="

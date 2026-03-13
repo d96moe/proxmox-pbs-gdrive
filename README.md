@@ -44,16 +44,17 @@ Proxmox VE
 | 02:00 | PBS backup all VMs/LXCs (vzdump via PVE schedule) |
 | 03:00 | PBS prune (`nightly-prune` job, keep-last 3) |
 | 03:30 | PBS garbage collection (frees chunks pruned the night before) |
-| 04:00 | restic snapshot PBS datastore → Google Drive |
+| 04:00 | restic snapshot + forget → Google Drive |
 
 **Why this order matters:**
 - Prune removes old snapshot index files but does not free disk space
-- GC runs after prune and actually frees the unreferenced chunks
-- restic runs last, uploading only the clean post-prune datastore
-- GC has a 24h chunk cutoff, so it always frees what *yesterday's* prune marked
+- GC runs after prune and actually frees the unreferenced chunks (24h cutoff)
+- restic runs last, uploading only the clean post-prune datastore,
+  then runs `forget` to enforce retention in Google Drive
 
-**Note:** restic has no separate `forget` schedule. PBS prune handles local retention.
-restic just snapshots whatever PBS keeps.
+**Two separate retention systems:**
+- PBS prune → controls what stays in `/mnt/pbs` locally
+- restic forget → controls what stays in Google Drive
 
 ## Retention
 
