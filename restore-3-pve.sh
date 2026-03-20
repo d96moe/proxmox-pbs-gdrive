@@ -59,43 +59,42 @@ proxmox-backup-manager prune-job update nightly-prune \
 proxmox-backup-manager datastore update ${PBS_DATASTORE_NAME} \
     --gc-schedule "${PBS_GC_SCHEDULE}"
 
-echo "=== Step 7: Write resticprofile config ==="
-# Order: PBS BU (02:00) → Prune (03:00) → GC (03:30) → restic backup+forget (04:00)
-# restic stops PBS, snapshots the clean post-prune datastore, runs forget to
-# enforce Google Drive retention, then starts PBS again.
-# NOTE: forget has NO schedule — resticprofile runs it automatically after backup.
-#       PBS prune handles local retention; restic forget handles GDrive retention.
-cat > /etc/resticprofile/profiles.yaml << RESTICEOF
-version: "1"
-global:
-  default-command: snapshots
-pbs-backup:
-  repository: "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}"
-  password-file: "${RESTIC_PASSWORD_FILE}"
-  backup:
-    source:
-      - "${PBS_DATASTORE_PATH}"
-    schedule: "${RESTIC_BACKUP_SCHEDULE}"
-    schedule-permission: system
-    run-before:
-      - "/usr/local/bin/stop-proxmox-backup.sh"
-    run-after:
-      - "systemctl start proxmox-backup"
-      - "systemctl start proxmox-backup-proxy"
-    run-after-fail:
-      - "systemctl start proxmox-backup"
-      - "systemctl start proxmox-backup-proxy"
-  forget:
-    keep-last: ${RESTIC_RETENTION_KEEP_LAST}
-    keep-daily: ${RESTIC_RETENTION_KEEP_DAILY}
-    keep-weekly: ${RESTIC_RETENTION_KEEP_WEEKLY}
-    keep-monthly: ${RESTIC_RETENTION_KEEP_MONTHLY}
-    prune: true
-RESTICEOF
+echo "=== Step 7: Install restic backup script + systemd timer ==="
+# Order: PBS BU (02:00) → PBS Prune (03:00) → PBS GC (03:30) → restic backup+forget (RESTIC_BACKUP_SCHEDULE)
+# The script stops PBS, snapshots the clean post-prune datastore (tagged per VM/LXC),
+# runs forget/prune for Google Drive retention, then restarts PBS.
 
-echo "=== Step 8: Register resticprofile schedules ==="
-resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup unschedule 2>/dev/null || true
-resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup schedule
+install -m 750 "${SCRIPT_DIR}/backup-restic-vms.sh" /usr/local/bin/backup-restic-vms.sh
+
+# systemd service
+cat > /etc/systemd/system/restic-backup.service << SVCEOF
+[Unit]
+Description=restic backup of PBS datastore to Google Drive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-restic-vms.sh
+StandardOutput=journal
+StandardError=journal
+SVCEOF
+
+# systemd timer
+cat > /etc/systemd/system/restic-backup.timer << TIMEREOF
+[Unit]
+Description=Run restic backup nightly after PBS prune
+
+[Timer]
+OnCalendar=${RESTIC_BACKUP_SCHEDULE}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+TIMEREOF
+
+systemctl daemon-reload
+systemctl enable --now restic-backup.timer
 
 echo "=== Step 9: Verify snapshots visible in PBS ==="
 proxmox-backup-client snapshots \
@@ -112,3 +111,8 @@ echo "Verify schedules:"
 echo "  proxmox-backup-manager prune-job list"
 echo "  proxmox-backup-manager datastore show ${PBS_DATASTORE_NAME}"
 echo "  systemctl list-timers | grep restic"
+echo "  systemctl status restic-backup.timer"
+echo ""
+echo "Manual restic backup run:"
+echo "  systemctl start restic-backup.service"
+echo "  journalctl -u restic-backup -f"
