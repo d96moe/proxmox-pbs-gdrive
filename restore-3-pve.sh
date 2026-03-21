@@ -75,7 +75,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+Environment=HOME=/root
 ExecStart=/usr/local/bin/backup-restic-vms.sh
+TimeoutStartSec=8h
 StandardOutput=journal
 StandardError=journal
 SVCEOF
