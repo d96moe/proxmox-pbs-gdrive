@@ -12,7 +12,6 @@ Supports both x86_64 (standard PVE install) and aarch64 (Raspberry Pi 5 with com
 | PBS | 4.1.4-1 (official) | 4.1.4-1 (pipbs) |
 | rclone | 1.73.1 | 1.73.2 |
 | restic | 0.18.0 | 0.18.0 |
-| resticprofile | latest at install | latest at install |
 | Debian (base) | Bookworm | Trixie |
 | Hardware | Any x86_64 with NVMe (tested: Minisforum Ryzen AI HX 370) | Raspberry Pi 5 8GB, NVMe (tested: NVMe via USB adapter) |
 
@@ -44,7 +43,7 @@ Proxmox VE
 | 02:00 | PBS backup all VMs/LXCs (vzdump via PVE schedule) |
 | 03:00 | PBS prune (`nightly-prune` job, keep-last 3) |
 | 03:30 | PBS garbage collection (frees chunks pruned the night before) |
-| 04:00 | restic snapshot + forget → Google Drive |
+| configurable | restic snapshot + forget → Google Drive (default 02:30, set via `RESTIC_BACKUP_SCHEDULE` in config.env) |
 
 **Why this order matters:**
 - Prune removes old snapshot index files but does not free disk space
@@ -254,9 +253,14 @@ rclone lsd gdrive:bu
 ### A5: Save restic password and init repo
 
 ```bash
-echo 'YOUR-RESTIC-PASSWORD' > /etc/resticprofile/restic-password
-chmod 600 /etc/resticprofile/restic-password
-resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup init
+# Save password (path must match RESTIC_PASSWORD_FILE in config.env)
+echo 'YOUR-RESTIC-PASSWORD' > /etc/proxmox-backup-restore/restic-password
+chmod 600 /etc/proxmox-backup-restore/restic-password
+
+# Init the restic repo in Google Drive
+source /etc/proxmox-backup-restore/config.env
+restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \
+  --password-file "${RESTIC_PASSWORD_FILE}" init
 ```
 
 > ⚠️ Store this password in a password manager — losing it means losing access to all backups!
@@ -276,7 +280,7 @@ Adds PBS as storage in PVE and activates nightly restic schedules:
 pvesh create /nodes/$(hostname)/vzdump --all 1 --storage pbs-local --mode snapshot --compress zstd
 
 # restic backup of PBS datastore to Google Drive
-resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup backup
+/opt/proxmox-restore/backup-restic-vms.sh
 ```
 
 > ℹ️ First restic backup uploads the full PBS datastore — takes time depending on connection speed.
@@ -367,11 +371,17 @@ Downloads and restores the full PBS datastore from Google Drive:
 ## Verify Backup Health
 
 ```bash
-# Check restic schedule timers
+# Check restic timer status
+systemctl status restic-backup.timer
 systemctl list-timers | grep restic
 
+# View last backup log
+journalctl -u restic-backup.service -n 50
+
 # List restic snapshots in Google Drive
-resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup snapshots
+source /etc/proxmox-backup-restore/config.env
+restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \
+  --password-file "${RESTIC_PASSWORD_FILE}" snapshots
 
 # Check PBS snapshots locally
 proxmox-backup-client snapshots --repository backup@pbs@127.0.0.1:local-store
@@ -379,6 +389,10 @@ proxmox-backup-client snapshots --repository backup@pbs@127.0.0.1:local-store
 # Check PBS datastore disk usage
 df -h /mnt/pbs
 df -i /mnt/pbs
+
+# Remove stale restic locks (if backup crashed)
+restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \
+  --password-file "${RESTIC_PASSWORD_FILE}" unlock --remove-all
 ```
 
 ---
