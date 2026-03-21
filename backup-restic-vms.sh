@@ -60,22 +60,22 @@ if [ ${#TAG_ARGS[@]} -eq 0 ]; then
 fi
 
 # ── 3. Run restic backup ──────────────────────────────────────────────────────
-echo "--- Running restic backup..."
-restic backup "${PBS_DATASTORE_PATH}" \
+echo "--- Running restic backup (timeout 6h)..."
+timeout 6h restic backup "${PBS_DATASTORE_PATH}" \
     --password-file "${RESTIC_PASSWORD_FILE}" \
     --repo "${RESTIC_REPO}" \
     --exclude "${PBS_DATASTORE_PATH}/.lock" \
-    "${TAG_ARGS[@]}"
+    "${TAG_ARGS[@]}" || { echo "ERROR: restic backup failed or timed out (exit $?)"; exit 1; }
 
 # ── 4. Forget / prune ────────────────────────────────────────────────────────
-echo "--- Running restic forget..."
-restic forget \
+echo "--- Running restic forget (timeout 1h)..."
+timeout 1h restic forget \
     --password-file "${RESTIC_PASSWORD_FILE}" \
     --repo "${RESTIC_REPO}" \
     --keep-last    "${RESTIC_RETENTION_KEEP_LAST}" \
     --keep-daily   "${RESTIC_RETENTION_KEEP_DAILY}" \
     --keep-weekly  "${RESTIC_RETENTION_KEEP_WEEKLY}" \
     --keep-monthly "${RESTIC_RETENTION_KEEP_MONTHLY}" \
-    --prune
+    --prune || { echo "ERROR: restic forget failed or timed out (exit $?)"; exit 1; }
 
 echo "=== restic VM backup complete: $(date) ==="
