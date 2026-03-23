@@ -78,6 +78,8 @@ fi
 PBS_SIZE_BYTES="$(lsblk -bno SIZE "${PBS_PARTITION}" 2>/dev/null | head -1)"
 PBS_SIZE_GB=$(( PBS_SIZE_BYTES / 1024 / 1024 / 1024 ))
 PBS_DISK="$(lsblk -no pkname "${PBS_PARTITION}" 2>/dev/null | head -1)"
+# If PBS_PARTITION is a whole disk (not a partition), pkname is empty — use the disk itself
+[ -z "${PBS_DISK}" ] && PBS_DISK="$(basename "${PBS_PARTITION}")"
 DISK_SIZE_BYTES="$(lsblk -bno SIZE "/dev/${PBS_DISK}" 2>/dev/null | head -1)"
 DISK_SIZE_GB=$(( DISK_SIZE_BYTES / 1024 / 1024 / 1024 ))
 REQUIRED_GB=$(( DISK_SIZE_GB * 15 / 100 ))
