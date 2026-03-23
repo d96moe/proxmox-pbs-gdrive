@@ -57,16 +57,24 @@ echo ""
 echo "=== The above shows available snapshots in Google Drive ==="
 echo "=== Identify the snapshot ID you want to restore (usually 'latest') ==="
 echo ""
-read -p "Press Enter to restore LATEST snapshot, or Ctrl+C to abort..."
+if [ "${CI:-}" = "true" ]; then
+    echo "CI mode: skipping restore confirmation prompt, continuing automatically."
+else
+    read -p "Press Enter to restore LATEST snapshot, or Ctrl+C to abort..."
+fi
 
 echo "=== Step 6: Stop PBS before restore ==="
 systemctl stop proxmox-backup proxmox-backup-proxy || true
 
 echo "=== Step 7: Clear existing PBS datastore ==="
-read -p "WARNING: This will DELETE all data in ${PBS_DATASTORE_PATH}. Type 'yes' to continue: " confirm
-if [ "$confirm" != "yes" ]; then
-    echo "Aborted."
-    exit 1
+if [ "${CI:-}" = "true" ]; then
+    echo "CI mode: auto-confirming deletion of ${PBS_DATASTORE_PATH}."
+else
+    read -p "WARNING: This will DELETE all data in ${PBS_DATASTORE_PATH}. Type 'yes' to continue: " confirm
+    if [ "$confirm" != "yes" ]; then
+        echo "Aborted."
+        exit 1
+    fi
 fi
 rm -rf ${PBS_DATASTORE_PATH}/*
 

@@ -90,17 +90,25 @@ if [ "${PBS_SIZE_GB}" -lt "${REQUIRED_GB}" ]; then
     echo ""
     echo "WARNING: PBS partition (${PBS_SIZE_GB} GB) is smaller than 15% of total disk (${REQUIRED_GB} GB)."
     echo "  This may be too small for multiple backup snapshots."
-    read -p "Continue anyway? (y/N) " confirm
-    if [ "${confirm}" != "y" ] && [ "${confirm}" != "Y" ]; then
-        echo "Aborted."
-        exit 1
+    if [ "${CI:-}" = "true" ]; then
+        echo "  CI mode: skipping size warning prompt, continuing automatically."
+    else
+        read -p "Continue anyway? (y/N) " confirm
+        if [ "${confirm}" != "y" ] && [ "${confirm}" != "Y" ]; then
+            echo "Aborted."
+            exit 1
+        fi
     fi
 else
     echo "  Size check:       OK (${PBS_SIZE_GB} GB >= ${REQUIRED_GB} GB minimum)"
 fi
 
 echo ""
-read -p "Does this look correct? Press Enter to continue or Ctrl+C to abort..."
+if [ "${CI:-}" = "true" ]; then
+    echo "CI mode: skipping confirmation prompt, continuing automatically."
+else
+    read -p "Does this look correct? Press Enter to continue or Ctrl+C to abort..."
+fi
 
 # -----------------------------------------------------------------------------
 # ARM64 (Raspberry Pi): check 4k page-size — required for PBS

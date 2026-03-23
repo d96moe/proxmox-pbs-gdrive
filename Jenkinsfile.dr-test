@@ -1,0 +1,197 @@
+// =============================================================================
+// Jenkinsfile.dr-test  —  Scenario B: Disaster Recovery CI Pipeline
+//
+// Weekly (Sunday 04:00) + manual trigger.
+// Prerequisite: at least one restic snapshot must exist in bu/ci-restore-test
+// (produced by Jenkinsfile.restore-test / Scenario A).
+//
+// Clones template 9001, installs tools (restore-1-install.sh), restores the
+// PBS datastore from GDrive (restore-2-auth.sh), wires PBS into PVE
+// (restore-3-pve.sh), then verifies that the test LXC snapshot from Scenario A
+// is visible via proxmox-backup-client.
+//
+// Post-always: destroys the cloned VM.
+// =============================================================================
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    triggers {
+        cron('H 4 * * 0')
+    }
+
+    environment {
+        // Same ID derivation as restore-test but offset by +50 to avoid collision
+        VM_ID         = "9${String.format('%02d', (env.BUILD_NUMBER.toInteger() % 100) + 50)}"
+        VM_IP         = "192.168.0.251"
+        PVE_HOST      = "192.168.0.200"
+        SSH_KEY       = "/var/lib/jenkins/.ssh/id_ed25519"
+        SSH_OPTS      = "-o StrictHostKeyChecking=no -o BatchMode=yes -i /var/lib/jenkins/.ssh/id_ed25519"
+        SCRIPTS_DIR   = "/opt/proxmox-restore"
+        GDRIVE_REPO   = "rclone:gdrive:bu/ci-restore-test"
+        RESTIC_PW     = "/etc/resticprofile/restic-password"
+    }
+
+    stages {
+
+        stage('Clone VM') {
+            steps {
+                echo "Cloning template 9001 -> VM ${VM_ID} (${env.BUILD_TAG})"
+                sh """
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "qm clone 9001 ${VM_ID} --name ci-dr-${env.BUILD_ID} --full 1"
+                """
+            }
+        }
+
+        stage('Start VM + wait for SSH') {
+            steps {
+                sh "ssh ${SSH_OPTS} root@${PVE_HOST} 'qm start ${VM_ID}'"
+                echo "Waiting for SSH at ${VM_IP} (max 150s)..."
+                sh """
+                    for i in \$(seq 1 30); do
+                        ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH ready" && exit 0
+                        echo "  attempt \$i/30..."
+                        sleep 5
+                    done
+                    echo "ERROR: VM did not become reachable within 150 seconds"
+                    exit 1
+                """
+            }
+        }
+
+        stage('Prepare disk') {
+            steps {
+                echo "Formatting /dev/sdb (PBS partition) with ext4..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "mkfs.ext4 -m 0 /dev/sdb"
+                """
+            }
+        }
+
+        stage('Copy credentials') {
+            steps {
+                echo "Copying rclone.conf and restic-password from PVE host to CI VM..."
+                sh """
+                    # Create required directories on the CI VM first
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "mkdir -p /root/.config/rclone /etc/resticprofile"
+
+                    # PVE host forwards the files to the CI VM over the internal network
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "scp -o StrictHostKeyChecking=no -o BatchMode=yes \
+                             /root/.config/rclone/rclone.conf \
+                             root@${VM_IP}:/root/.config/rclone/rclone.conf"
+
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "scp -o StrictHostKeyChecking=no -o BatchMode=yes \
+                             /etc/resticprofile/restic-password \
+                             root@${VM_IP}:/etc/resticprofile/restic-password"
+                """
+            }
+        }
+
+        stage('Deploy scripts') {
+            steps {
+                echo "Copying proxmox_restore checkout to CI VM..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} "mkdir -p ${SCRIPTS_DIR}"
+                    scp ${SSH_OPTS} -r \
+                        ${WORKSPACE}/. \
+                        root@${VM_IP}:${SCRIPTS_DIR}/
+                """
+            }
+        }
+
+        stage('Install tools (restore-1-install.sh)') {
+            steps {
+                echo "Installing PBS, rclone, restic, resticprofile on CI VM..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+cp config_ci.env config.env
+CI=true bash restore-1-install.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Restore from GDrive (restore-2-auth.sh)') {
+            steps {
+                echo "Restoring PBS datastore from Google Drive..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+# config.env was already written by the previous stage
+CI=true bash restore-2-auth.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Configure PVE (restore-3-pve.sh)') {
+            steps {
+                echo "Wiring PBS storage into PVE, enabling schedules..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+CI=true bash restore-3-pve.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Verify PBS snapshots') {
+            steps {
+                echo "Checking that the Scenario A LXC snapshot is visible in PBS..."
+                sh """
+                    SNAPSHOT_OUTPUT=\$(ssh ${SSH_OPTS} root@${VM_IP} \
+                        "proxmox-backup-client snapshots \
+                             --repository backup@pbs@127.0.0.1:ci-store" 2>&1)
+
+                    echo "\${SNAPSHOT_OUTPUT}"
+
+                    # Fail if no snapshot lines are returned (header only = empty store)
+                    SNAPSHOT_COUNT=\$(echo "\${SNAPSHOT_OUTPUT}" \
+                        | grep -c "ct/" || true)
+
+                    echo "LXC snapshots found: \${SNAPSHOT_COUNT}"
+                    if [ "\${SNAPSHOT_COUNT}" -lt 1 ]; then
+                        echo "ERROR: no LXC snapshots visible in PBS after restore"
+                        exit 1
+                    fi
+                    echo "Verification PASSED: \${SNAPSHOT_COUNT} LXC snapshot(s) visible in PBS"
+                """
+            }
+        }
+
+    } // stages
+
+    post {
+        always {
+            echo "=== Cleanup ==="
+            // Destroy the cloned VM regardless of outcome
+            sh """
+                ssh ${SSH_OPTS} root@${PVE_HOST} \
+                    "qm stop ${VM_ID} 2>/dev/null || true; sleep 5; qm destroy ${VM_ID} --purge 1" \
+                    || true
+            """
+            echo "VM ${VM_ID} destroyed"
+        }
+        success {
+            echo "DR-test pipeline PASSED — disaster recovery scenario verified"
+        }
+        failure {
+            echo "DR-test pipeline FAILED — check logs above"
+        }
+    }
+}
