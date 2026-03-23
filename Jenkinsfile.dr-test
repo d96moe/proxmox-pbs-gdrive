@@ -44,7 +44,7 @@ pipeline {
                 echo "Cloning template 9001 -> VM ${VM_ID} (${env.BUILD_TAG})"
                 sh """
                     ssh ${SSH_OPTS} root@${PVE_HOST} \
-                        "qm clone 9001 ${VM_ID} --name ci-dr-${env.BUILD_ID} --full 1"
+                        "qm clone 9001 ${VM_ID} --name restore-ci --full 1"
                 """
             }
         }
