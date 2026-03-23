@@ -24,9 +24,16 @@ systemctl start proxmox-backup
 systemctl start proxmox-backup-proxy
 sleep 5
 
-echo "=== Step 2: Re-create PBS datastore (points to restored data) ==="
-proxmox-backup-manager datastore remove ${PBS_DATASTORE_NAME} 2>/dev/null || true
-proxmox-backup-manager datastore create ${PBS_DATASTORE_NAME} ${PBS_DATASTORE_PATH}
+echo "=== Step 2: Ensure PBS datastore is registered ==="
+# restore-1-install.sh already created the datastore at PBS_DATASTORE_PATH.
+# After restic restores data to that path, PBS finds the chunks automatically
+# on restart. Only create the config entry if it is genuinely missing.
+# Do NOT remove-then-create: 'datastore create' rejects non-empty paths.
+if proxmox-backup-manager datastore list 2>/dev/null | grep -q "${PBS_DATASTORE_NAME}"; then
+    echo "  Datastore ${PBS_DATASTORE_NAME} already registered — PBS will use restored data"
+else
+    proxmox-backup-manager datastore create ${PBS_DATASTORE_NAME} ${PBS_DATASTORE_PATH}
+fi
 
 echo "=== Step 3: Set ACL for backup user ==="
 proxmox-backup-manager acl update /datastore/${PBS_DATASTORE_NAME} DatastoreAdmin \
