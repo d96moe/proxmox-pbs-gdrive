@@ -155,8 +155,8 @@ fi
 apt-get update
 apt-get install -y proxmox-backup-server
 
-# Remove enterprise repo that PBS installer adds automatically (requires subscription, causes 401)
-rm -f /etc/apt/sources.list.d/pbs-enterprise.sources
+# Remove enterprise repos that PBS installer adds automatically (require subscription, cause 401)
+rm -f /etc/apt/sources.list.d/*enterprise*
 apt-get update -qq
 
 echo "=== Step 2: Install rclone ==="
