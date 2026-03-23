@@ -28,7 +28,7 @@ pipeline {
         VM_IP         = "192.168.0.251"
         PVE_HOST      = "192.168.0.200"
         SSH_KEY       = "/var/lib/jenkins/.ssh/id_ed25519"
-        SSH_OPTS      = "-o StrictHostKeyChecking=no -o BatchMode=yes -i /var/lib/jenkins/.ssh/id_ed25519"
+        SSH_OPTS      = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -i /var/lib/jenkins/.ssh/id_ed25519"
         SCRIPTS_DIR   = "/opt/proxmox-restore"
         GDRIVE_REPO   = "rclone:gdrive:bu/ci-restore-test"
         RESTIC_PW     = "/etc/resticprofile/restic-password"
