@@ -68,8 +68,8 @@ timeout 6h restic backup "${PBS_DATASTORE_PATH}" \
     "${TAG_ARGS[@]}" || { echo "ERROR: restic backup failed or timed out (exit $?)"; exit 1; }
 
 # ── 4. Forget / prune ────────────────────────────────────────────────────────
-echo "--- Running restic forget (timeout 1h)..."
-timeout 1h restic forget \
+echo "--- Running restic forget (timeout 3h)..."
+timeout 3h restic forget \
     --password-file "${RESTIC_PASSWORD_FILE}" \
     --repo "${RESTIC_REPO}" \
     --keep-last    "${RESTIC_RETENTION_KEEP_LAST}" \
