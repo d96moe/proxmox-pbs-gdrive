@@ -176,11 +176,28 @@ ENDSSH
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
-pvesh create /nodes/\$(hostname)/vzdump \
-    --vmid 100 \
-    --storage pbs-ci \
-    --mode snapshot \
-    --compress zstd
+source /opt/proxmox-restore/config.env
+
+# pbs-ci storage doesn't exist yet — restore-3-pve.sh adds it in the DR flow,
+# but Scenario A never runs restore-3-pve.sh. Add it now.
+FINGERPRINT=\$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (sha256):" | awk '{print \$NF}')
+pvesh create /storage \
+    --storage "\${PVE_PBS_STORAGE_ID}" \
+    --type pbs \
+    --server "\${PVE_PBS_SERVER}" \
+    --datastore "\${PBS_DATASTORE_NAME}" \
+    --username "\${PBS_USER}" \
+    --password "\${PBS_USER_PASSWORD}" \
+    --fingerprint "\${FINGERPRINT}" \
+    --content backup \
+    --prune-backups "\${PBS_RETENTION_LOCAL}" || true
+
+# Ensure pvedaemon is running (required for vzdump)
+systemctl is-active --quiet pvedaemon || systemctl start pvedaemon pveproxy pvestatd
+sleep 3
+
+# vzdump is synchronous — exits non-zero on failure unlike pvesh create .../vzdump
+vzdump 100 --storage "\${PVE_PBS_STORAGE_ID}" --mode snapshot --compress zstd
 echo "PBS backup complete"
 ENDSSH
                 """
