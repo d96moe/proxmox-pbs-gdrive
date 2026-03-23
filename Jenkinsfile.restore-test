@@ -204,6 +204,18 @@ ENDSSH
             }
         }
 
+        stage('Backup PVE config to GDrive') {
+            steps {
+                echo "Backing up PVE host config (rclone auth, resticprofile, /etc/pve) to Google Drive..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+/usr/local/bin/backup-pve-config.sh
+ENDSSH
+                """
+            }
+        }
+
         stage('Restic backup to GDrive') {
             steps {
                 echo "Backing up PBS datastore to Google Drive via resticprofile..."

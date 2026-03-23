@@ -44,16 +44,24 @@ FINGERPRINT=$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (
 echo "PBS Fingerprint: ${FINGERPRINT}"
 
 echo "=== Step 5: Add PBS storage to PVE ==="
-pvesh create /storage \
-    --storage ${PVE_PBS_STORAGE_ID} \
-    --type pbs \
-    --server ${PVE_PBS_SERVER} \
-    --datastore ${PBS_DATASTORE_NAME} \
-    --username ${PBS_USER} \
-    --password "${PBS_USER_PASSWORD}" \
-    --fingerprint "${FINGERPRINT}" \
-    --content backup \
-    --prune-backups "${PBS_RETENTION_LOCAL}"
+# The config restore may have already written pbs-ci into /etc/pve/storage.cfg
+# with a stale fingerprint from Scenario A. Update fingerprint if it exists,
+# create it from scratch if it doesn't.
+if pvesh get /storage/${PVE_PBS_STORAGE_ID} >/dev/null 2>&1; then
+    echo "  Storage ${PVE_PBS_STORAGE_ID} already exists — updating fingerprint"
+    pvesh set /storage/${PVE_PBS_STORAGE_ID} --fingerprint "${FINGERPRINT}"
+else
+    pvesh create /storage \
+        --storage ${PVE_PBS_STORAGE_ID} \
+        --type pbs \
+        --server ${PVE_PBS_SERVER} \
+        --datastore ${PBS_DATASTORE_NAME} \
+        --username ${PBS_USER} \
+        --password "${PBS_USER_PASSWORD}" \
+        --fingerprint "${FINGERPRINT}" \
+        --content backup \
+        --prune-backups "${PBS_RETENTION_LOCAL}"
+fi
 
 echo "=== Step 6: Set PBS prune and GC schedules ==="
 # prune is a separate prune-job, NOT a datastore-level setting

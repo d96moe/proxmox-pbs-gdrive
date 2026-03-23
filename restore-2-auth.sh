@@ -31,6 +31,11 @@ echo "Looking for latest config backup in ${GDRIVE_CONFIG_PATH}..."
 
 LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1) || LATEST_CONFIG=""
 if [ -z "${LATEST_CONFIG}" ]; then
+    if [ "${CI:-}" = "true" ]; then
+        echo "ERROR: CI mode — expected a config backup in ${GDRIVE_CONFIG_PATH} but none found."
+        echo "Ensure Scenario A (restore-test pipeline) has run at least once first."
+        exit 1
+    fi
     echo "WARNING: No config backup found in ${GDRIVE_CONFIG_PATH}"
     echo "Continuing without config restore — you will need to configure rclone and restic manually"
 else
