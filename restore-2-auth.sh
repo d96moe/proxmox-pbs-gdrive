@@ -29,7 +29,7 @@ echo "=== Step 2: Download and restore PVE host config ==="
 GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}"
 echo "Looking for latest config backup in ${GDRIVE_CONFIG_PATH}..."
 
-LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" | sort -r | head -1)
+LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1) || LATEST_CONFIG=""
 if [ -z "${LATEST_CONFIG}" ]; then
     echo "WARNING: No config backup found in ${GDRIVE_CONFIG_PATH}"
     echo "Continuing without config restore — you will need to configure rclone and restic manually"
