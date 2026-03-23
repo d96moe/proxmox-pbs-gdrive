@@ -78,4 +78,9 @@ timeout 3h restic forget \
     --keep-monthly "${RESTIC_RETENTION_KEEP_MONTHLY}" \
     --prune || { echo "ERROR: restic forget failed or timed out (exit $?)"; exit 1; }
 
+# ── 5. Empty Google Drive trash ──────────────────────────────────────────────
+# Deleted packs end up in GDrive trash and count against quota until emptied.
+echo "--- Emptying Google Drive trash..."
+rclone cleanup "${RESTICPROFILE_GDRIVE_REMOTE}:" || true
+
 echo "=== restic VM backup complete: $(date) ==="
