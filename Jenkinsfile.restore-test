@@ -79,7 +79,7 @@ ENDSSH
                 echo "Formatting /dev/sdb (PBS partition) with ext4..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} \
-                        "mkfs.ext4 -m 0 /dev/sdb"
+                        "umount /dev/sdb 2>/dev/null || true; umount /mnt/pbs 2>/dev/null || true; mkfs.ext4 -F -m 0 /dev/sdb"
                 """
             }
         }
