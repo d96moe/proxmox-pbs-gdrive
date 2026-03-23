@@ -164,9 +164,12 @@ ENDSSH
             steps {
                 echo "Checking that the Scenario A LXC snapshot is visible in PBS..."
                 sh """
-                    SNAPSHOT_OUTPUT=\$(ssh ${SSH_OPTS} root@${VM_IP} \
-                        "proxmox-backup-client snapshots \
-                             --repository backup@pbs@127.0.0.1:ci-store" 2>&1)
+                    SNAPSHOT_OUTPUT=\$(ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+source /opt/proxmox-restore/config.env
+PBS_PASSWORD="\${PBS_USER_PASSWORD}" proxmox-backup-client snapshots \
+    --repository "\${PBS_USER}@\${PVE_PBS_SERVER}:\${PBS_DATASTORE_NAME}" 2>&1
+ENDSSH
+)
 
                     echo "\${SNAPSHOT_OUTPUT}"
 

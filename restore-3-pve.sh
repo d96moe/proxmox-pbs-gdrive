@@ -106,7 +106,7 @@ systemctl daemon-reload
 systemctl enable --now restic-backup.timer
 
 echo "=== Step 9: Verify snapshots visible in PBS ==="
-proxmox-backup-client snapshots \
+PBS_PASSWORD="${PBS_USER_PASSWORD}" proxmox-backup-client snapshots \
     --repository ${PBS_USER}@${PVE_PBS_SERVER}:${PBS_DATASTORE_NAME}
 
 echo ""
