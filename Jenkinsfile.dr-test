@@ -79,20 +79,21 @@ pipeline {
             steps {
                 echo "Copying rclone.conf and restic-password from PVE host to CI VM..."
                 sh """
-                    # Create required directories on the CI VM first
+                    # Create required directories on the CI VM
                     ssh ${SSH_OPTS} root@${VM_IP} \
                         "mkdir -p /root/.config/rclone /etc/resticprofile"
 
-                    # PVE host forwards the files to the CI VM over the internal network
+                    # Relay files through Jenkins (PVE -> Jenkins stdout -> CI VM)
+                    # avoids needing PVE to SSH into the CI VM
                     ssh ${SSH_OPTS} root@${PVE_HOST} \
-                        "scp -o StrictHostKeyChecking=no -o BatchMode=yes \
-                             /root/.config/rclone/rclone.conf \
-                             root@${VM_IP}:/root/.config/rclone/rclone.conf"
+                        "cat /root/.config/rclone/rclone.conf" | \
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "cat > /root/.config/rclone/rclone.conf"
 
                     ssh ${SSH_OPTS} root@${PVE_HOST} \
-                        "scp -o StrictHostKeyChecking=no -o BatchMode=yes \
-                             /etc/resticprofile/restic-password \
-                             root@${VM_IP}:/etc/resticprofile/restic-password"
+                        "cat /etc/resticprofile/restic-password" | \
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "cat > /etc/resticprofile/restic-password"
                 """
             }
         }
