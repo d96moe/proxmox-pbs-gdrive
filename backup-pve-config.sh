@@ -35,6 +35,7 @@ echo "    Destination: ${GDRIVE_CONFIG_PATH}"
 # Create tarball of critical config files
 # /boot/firmware/config.txt is Pi5-specific — harmless to include on x86 (will just be missing)
 tar -czf "${TARBALL}" \
+    /var/lib/pve-cluster/config.db \
     /etc/pve/ \
     /etc/network/interfaces \
     /etc/hosts \

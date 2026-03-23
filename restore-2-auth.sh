@@ -1,12 +1,17 @@
 #!/bin/bash
 # =============================================================================
 # restore-2-auth.sh
-# Step 2: Verify rclone auth and restore PBS datastore from Google Drive
+# Step 2: Restore PVE config from backup, then restore PBS datastore from GDrive
 #
 # Prerequisites:
 #   - restore-1-install.sh completed
-#   - rclone configured manually (rclone config - see README)
-#   - Restic password saved to /etc/resticprofile/restic-password
+#
+# Config backup restore (Step 1) supports two paths:
+#   A) Manual DR: copy pve-config-YYYY-MM-DD.tar.gz to /tmp/ before running.
+#      The script finds it, extracts it (restoring rclone auth + restic password),
+#      then uses rclone to restore the PBS datastore. No rclone setup needed first.
+#   B) Automated / CI: if no local tar exists and rclone is already configured,
+#      the latest config backup is downloaded from Google Drive automatically.
 #
 # After this script: run restore-3-pve.sh
 # =============================================================================
@@ -21,33 +26,66 @@ if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
 fi
 source "${SCRIPT_DIR}/config.env"
 
-echo "=== Step 1: Verify rclone access to Google Drive ==="
+GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}"
+
+echo "=== Step 1: Restore PVE host config ==="
+
+# --- Path A: local tar already on disk (manual DR: downloaded via browser + scp) ---
+LOCAL_TAR=$(ls /tmp/pve-config-*.tar.gz 2>/dev/null | sort -r | head -1 || true)
+
+if [ -n "${LOCAL_TAR}" ]; then
+    echo "Found local config backup: ${LOCAL_TAR}"
+    CONFIG_TAR="${LOCAL_TAR}"
+    DOWNLOADED=false
+else
+    # --- Path B: download from Google Drive (rclone must already be configured) ---
+    echo "No local tar found. Checking Google Drive (${GDRIVE_CONFIG_PATH})..."
+    rclone lsd ${RESTICPROFILE_GDRIVE_REMOTE}:bu
+    echo "rclone OK"
+
+    LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1) || LATEST_CONFIG=""
+    if [ -z "${LATEST_CONFIG}" ]; then
+        if [ "${CI:-}" = "true" ]; then
+            echo "ERROR: CI mode — expected a config backup in ${GDRIVE_CONFIG_PATH} but none found."
+            echo "Ensure Scenario A (restore-test pipeline) has run at least once first."
+            exit 1
+        fi
+        echo "WARNING: No config backup found in ${GDRIVE_CONFIG_PATH}"
+        echo "Continuing without config restore — configure rclone and restic manually before proceeding."
+        CONFIG_TAR=""
+    else
+        echo "Found on GDrive: ${LATEST_CONFIG}"
+        rclone copy "${GDRIVE_CONFIG_PATH}/${LATEST_CONFIG}" /tmp/
+        CONFIG_TAR="/tmp/${LATEST_CONFIG}"
+        DOWNLOADED=true
+    fi
+fi
+
+if [ -n "${CONFIG_TAR}" ]; then
+    echo "Extracting config..."
+    # /etc/pve is a pmxcfs FUSE filesystem — the authoritative data is
+    # /var/lib/pve-cluster/config.db; pmxcfs regenerates /etc/pve from it
+    # on startup. Stop pve-cluster so the FUSE mount is gone, restore config.db
+    # (and all other files), then restart so pmxcfs rebuilds /etc/pve.
+    systemctl stop pve-cluster 2>/dev/null || true
+    sleep 2
+    tar -xzf "${CONFIG_TAR}" -C / \
+        --exclude='./etc/pve' \
+        --exclude='etc/pve'
+    [ "${DOWNLOADED:-false}" = "true" ] && rm -f "${CONFIG_TAR}"
+    echo "Restarting pve-cluster with restored config.db..."
+    systemctl start pve-cluster
+    sleep 5
+    systemctl is-active pve-cluster && echo "pve-cluster: OK" || \
+        { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
+    echo "Config restored! PVE config, rclone auth and restic password are now in place."
+fi
+
+echo "=== Step 2: Verify rclone access to Google Drive ==="
 rclone lsd ${RESTICPROFILE_GDRIVE_REMOTE}:bu
 echo "rclone OK"
 
-echo "=== Step 2: Download and restore PVE host config ==="
-GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}"
-echo "Looking for latest config backup in ${GDRIVE_CONFIG_PATH}..."
-
-LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1) || LATEST_CONFIG=""
-if [ -z "${LATEST_CONFIG}" ]; then
-    if [ "${CI:-}" = "true" ]; then
-        echo "ERROR: CI mode — expected a config backup in ${GDRIVE_CONFIG_PATH} but none found."
-        echo "Ensure Scenario A (restore-test pipeline) has run at least once first."
-        exit 1
-    fi
-    echo "WARNING: No config backup found in ${GDRIVE_CONFIG_PATH}"
-    echo "Continuing without config restore — you will need to configure rclone and restic manually"
-else
-    echo "Found: ${LATEST_CONFIG}"
-    rclone copy "${GDRIVE_CONFIG_PATH}/${LATEST_CONFIG}" /tmp/
-    echo "Extracting config..."
-    tar -xzf "/tmp/${LATEST_CONFIG}" -C /
-    rm -f "/tmp/${LATEST_CONFIG}"
-    echo "Config restored! rclone auth, restic password and PVE config are now in place."
-fi
-
-echo "=== Step 4: Verify restic password file exists ==="
+echo "=== Step 3: Verify restic password file exists ==="
 if [ ! -f "${RESTIC_PASSWORD_FILE}" ]; then
     echo "ERROR: ${RESTIC_PASSWORD_FILE} not found!"
     echo "Run: echo 'YOUR-PASSWORD' > ${RESTIC_PASSWORD_FILE} && chmod 600 ${RESTIC_PASSWORD_FILE}"
@@ -55,7 +93,7 @@ if [ ! -f "${RESTIC_PASSWORD_FILE}" ]; then
 fi
 echo "Password file OK"
 
-echo "=== Step 5: List available restic snapshots ==="
+echo "=== Step 4: List available restic snapshots ==="
 resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup snapshots
 
 echo ""
@@ -68,10 +106,10 @@ else
     read -p "Press Enter to restore LATEST snapshot, or Ctrl+C to abort..."
 fi
 
-echo "=== Step 6: Stop PBS before restore ==="
+echo "=== Step 5: Stop PBS before restore ==="
 systemctl stop proxmox-backup proxmox-backup-proxy || true
 
-echo "=== Step 7: Clear existing PBS datastore ==="
+echo "=== Step 6: Clear existing PBS datastore ==="
 if [ "${CI:-}" = "true" ]; then
     echo "CI mode: auto-confirming deletion of ${PBS_DATASTORE_PATH}."
 else
@@ -83,7 +121,7 @@ else
 fi
 rm -rf ${PBS_DATASTORE_PATH}/*
 
-echo "=== Step 8: Restore from Google Drive ==="
+echo "=== Step 7: Restore from Google Drive ==="
 echo "This will take several hours depending on data size and network speed..."
 restic \
     -r rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH} \
