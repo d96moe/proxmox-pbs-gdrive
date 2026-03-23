@@ -128,6 +128,25 @@ ENDSSH
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
 
+# Ensure pve-cluster + PVE daemons are running (may not be up yet after PBS install)
+echo "--- Ensuring PVE services are running..."
+for i in \$(seq 1 12); do
+    if systemctl is-active --quiet pve-cluster; then
+        echo "  pve-cluster: running"
+        break
+    fi
+    echo "  pve-cluster not ready, attempt \$i/12..."
+    systemctl reset-failed pve-cluster 2>/dev/null || true
+    systemctl start pve-cluster 2>/dev/null || true
+    sleep 5
+done
+systemctl is-active --quiet pve-cluster || { echo "ERROR: pve-cluster failed to start"; journalctl -u pve-cluster -n 20 --no-pager; exit 1; }
+# Start other PVE daemons if not running
+systemctl is-active --quiet pvedaemon || systemctl start pvedaemon 2>/dev/null || true
+systemctl is-active --quiet pveproxy  || systemctl start pveproxy  2>/dev/null || true
+systemctl is-active --quiet pvestatd  || systemctl start pvestatd  2>/dev/null || true
+sleep 3
+
 # Update template list and download latest Debian 12 standard template
 pveam update
 
