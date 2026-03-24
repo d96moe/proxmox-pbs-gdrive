@@ -54,7 +54,7 @@ End
 Describe 'rclone credentials'
     It 'can access Google Drive (credentials restored from config tar)'
         When run rclone lsd "${RESTICPROFILE_GDRIVE_REMOTE}:bu"
-        The output should include 'bu'
+        The output should include 'ci-restore-test'
     End
 End
 
