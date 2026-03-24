@@ -234,10 +234,7 @@ ENDSSH
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
 source /opt/proxmox-restore/config.env
-FINGERPRINT=\$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (sha256):" | awk '{print \$NF}')
-PBS_PASSWORD="\${PBS_USER_PASSWORD}" PBS_FINGERPRINT="\${FINGERPRINT}" \
-    proxmox-backup-client verify \
-    --repository "\${PBS_USER}@\${PVE_PBS_SERVER}:\${PBS_DATASTORE_NAME}"
+proxmox-backup-manager datastore verify ${PBS_DATASTORE_NAME}
 echo "Snapshot integrity OK"
 ENDSSH
                 """
