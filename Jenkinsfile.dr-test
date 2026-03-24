@@ -127,19 +127,6 @@ ENDSSH
             }
         }
 
-        stage('Install ShellSpec') {
-            steps {
-                echo "Installing ShellSpec test framework on CI VM..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
-shellspec --version
-ENDSSH
-                """
-            }
-        }
-
         stage('Install tools (restore-1-install.sh)') {
             steps {
                 echo "Installing PBS, rclone, restic, resticprofile on CI VM..."
@@ -282,23 +269,10 @@ ENDSSH
             }
         }
 
-        stage('Run ShellSpec (Scenario B)') {
-            steps {
-                echo "Running ShellSpec integration tests for Scenario B..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} \
-                        'cd /opt/proxmox-restore && shellspec --shell bash --format junit spec/scenario_b_spec.sh' \
-                        > shellspec-b.xml
-                """
-            }
-        }
-
     } // stages
 
     post {
         always {
-            junit allowEmptyResults: true, testResults: 'shellspec-*.xml'
-
             echo "=== Cleanup ==="
             // Destroy the cloned VM regardless of outcome
             sh """

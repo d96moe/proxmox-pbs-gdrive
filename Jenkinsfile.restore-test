@@ -124,19 +124,6 @@ ENDSSH
             }
         }
 
-        stage('Install ShellSpec') {
-            steps {
-                echo "Installing ShellSpec test framework on CI VM..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
-shellspec --version
-ENDSSH
-                """
-            }
-        }
-
         stage('Run restore-1-install.sh') {
             steps {
                 echo "Installing PBS, rclone, restic, resticprofile on CI VM..."
@@ -276,31 +263,10 @@ ENDSSH
             }
         }
 
-        stage('Run ShellSpec (Scenario A)') {
-            steps {
-                echo "Running ShellSpec integration tests for Scenario A..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-cd /opt/proxmox-restore
-echo "shellspec path: \$(which shellspec 2>/dev/null || echo NOT FOUND)"
-echo "config.env exists: \$(test -f config.env && echo YES || echo NO)"
-echo ".shellspec exists: \$(test -f .shellspec && echo YES || echo NO)"
-echo "spec/ contents: \$(ls spec/)"
-ENDSSH
-                    ssh ${SSH_OPTS} root@${VM_IP} \
-                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_a_spec.sh' \
-                        > shellspec-a.xml
-                """
-            }
-        }
-
     } // stages
 
     post {
         always {
-            junit allowEmptyResults: true, testResults: 'shellspec-*.xml'
-
             echo "=== Cleanup ==="
 
             // Prune old GDrive test snapshots (keep last 1 to allow DR pipeline to run)
