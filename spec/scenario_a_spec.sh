@@ -52,17 +52,17 @@ Describe 'Tool installation'
 
     It 'installs restic'
         When run which restic
-        The status should be success
+        The output should include 'restic'
     End
 
     It 'installs rclone'
         When run which rclone
-        The status should be success
+        The output should include 'rclone'
     End
 
     It 'installs resticprofile'
         When run which resticprofile
-        The status should be success
+        The output should include 'resticprofile'
     End
 End
 
