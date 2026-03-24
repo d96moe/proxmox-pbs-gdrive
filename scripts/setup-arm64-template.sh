@@ -30,12 +30,11 @@ JENKINS_PUBKEY=$(qm config 9001 | grep sshkeys | sed 's/sshkeys: //' | python3 -
 echo "=== Step 1: Install arm64 UEFI firmware ==="
 apt-get install -y qemu-efi-aarch64
 
-# PVE looks for AAVMF at /usr/share/AAVMF/ — create symlinks from qemu-efi-aarch64
-mkdir -p /usr/share/AAVMF
-[ -f /usr/share/AAVMF/AAVMF_CODE.fd ] || \
-    ln -sf /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/AAVMF/AAVMF_CODE.fd
-[ -f /usr/share/AAVMF/AAVMF_VARS.fd ] || \
-    ln -sf /usr/share/qemu-efi-aarch64/QEMU_VARS.fd /usr/share/AAVMF/AAVMF_VARS.fd
+# PVE 9 looks for AAVMF in its own firmware dir — create symlinks there
+[ -f /usr/share/pve-edk2-firmware/AAVMF_CODE.fd ] || \
+    ln -sf /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/pve-edk2-firmware/AAVMF_CODE.fd
+[ -f /usr/share/pve-edk2-firmware/AAVMF_VARS.fd ] || \
+    ln -sf /usr/share/qemu-efi-aarch64/QEMU_VARS.fd /usr/share/pve-edk2-firmware/AAVMF_VARS.fd
 echo "AAVMF firmware: OK"
 
 echo "=== Step 2: Download Debian 12 arm64 cloud image ==="
