@@ -28,13 +28,12 @@ JENKINS_PUBKEY=$(qm config 9001 | grep sshkeys | sed 's/sshkeys: //' | python3 -
 [ -z "$JENKINS_PUBKEY" ] && { echo "ERROR: cannot extract Jenkins pubkey from template 9001"; exit 1; }
 
 echo "=== Step 1: Install arm64 UEFI firmware ==="
-apt-get install -y qemu-efi-aarch64
+# ovmf provides AAVMF_CODE.fd + AAVMF_VARS.fd in /usr/share/AAVMF/
+apt-get install -y ovmf
 
-# PVE 9 looks for AAVMF in its own firmware dir — create symlinks there
-[ -f /usr/share/pve-edk2-firmware/AAVMF_CODE.fd ] || \
-    ln -sf /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/pve-edk2-firmware/AAVMF_CODE.fd
-[ -f /usr/share/pve-edk2-firmware/AAVMF_VARS.fd ] || \
-    ln -sf /usr/share/qemu-efi-aarch64/QEMU_VARS.fd /usr/share/pve-edk2-firmware/AAVMF_VARS.fd
+# PVE 9 looks in its own firmware dir — symlink from ovmf's canonical location
+ln -sf /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/pve-edk2-firmware/AAVMF_CODE.fd
+ln -sf /usr/share/AAVMF/AAVMF_VARS.fd /usr/share/pve-edk2-firmware/AAVMF_VARS.fd
 echo "AAVMF firmware: OK"
 
 echo "=== Step 2: Download Debian 12 arm64 cloud image ==="
