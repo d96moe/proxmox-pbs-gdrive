@@ -69,6 +69,10 @@ if [ -n "${CONFIG_TAR}" ]; then
     # (and all other files), then restart so pmxcfs rebuilds /etc/pve.
     systemctl stop pve-cluster 2>/dev/null || true
     sleep 2
+    # Remove stale WAL files — if left over from the running cluster, they would
+    # override the restored config.db when pve-cluster restarts.
+    rm -f /var/lib/pve-cluster/config.db-wal \
+          /var/lib/pve-cluster/config.db-shm 2>/dev/null || true
     tar -xzf "${CONFIG_TAR}" -C / \
         --exclude='./etc/pve' \
         --exclude='etc/pve'
