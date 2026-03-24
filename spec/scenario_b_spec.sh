@@ -11,8 +11,8 @@
 # Prerequisites: spec_helper.sh sources config.env and exports all variables.
 # =============================================================================
 
-# shellcheck source=spec/spec_helper.sh
-. "$(dirname "$0")/spec_helper.sh"
+# spec_helper.sh is loaded automatically via --require spec_helper in .shellspec
+# (sourcing manually is not possible here since $0 points to the ShellSpec runner)
 
 # -----------------------------------------------------------------------------
 # Helper functions
