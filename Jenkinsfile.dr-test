@@ -248,7 +248,11 @@ ct.sort(key=lambda x: x.get('ctime', 0))
 print(ct[-1]['volid'])
 ")
 echo "Restoring from: \${SNAP}"
-pct restore 100 "\${SNAP}" --storage local --force 1
+# config.db restore leaves a stale LXC 100 config entry pointing to a disk
+# that does not exist on this VM. Remove the config before restoring so
+# pct restore can create everything from scratch.
+rm -f /etc/pve/lxc/100.conf
+pct restore 100 "\${SNAP}" --storage local
 echo "LXC 100 restored — starting..."
 pct start 100
 sleep 5
