@@ -23,8 +23,8 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMo
 SSH_KEY="/var/lib/jenkins/.ssh/id_ed25519"
 
 # Trixie arm64 cloud image — matches Pi 5 base OS
-IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-nocloud-arm64-daily.qcow2"
-IMAGE_PATH="/var/lib/vz/template/iso/debian-13-nocloud-arm64.qcow2"
+IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-genericcloud-arm64-daily.qcow2"
+IMAGE_PATH="/var/lib/vz/template/iso/debian-13-genericcloud-arm64.qcow2"
 
 # Jenkins SSH pubkey — extracted from template 9001
 JENKINS_PUBKEY=$(qm config 9001 | grep sshkeys \
