@@ -38,22 +38,39 @@ Proxmox VE
 
 ## Backup Schedule
 
-| Time  | Job |
-|-------|-----|
+| Time | Job |
+|------|-----|
 | 02:00 | PBS backup all VMs/LXCs (vzdump via PVE schedule) |
 | 03:00 | PBS prune (`nightly-prune` job, keep-last 3) |
 | 03:30 | PBS garbage collection (frees chunks pruned the night before) |
-| configurable | restic snapshot + forget → Google Drive (default 02:30, set via `RESTIC_BACKUP_SCHEDULE` in config.env) |
+| configurable | restic snapshot + forget → Google Drive (default `02:30`, `RESTIC_BACKUP_SCHEDULE`) |
+| 04:00 | PVE config backup → Google Drive (`pve-config-backup.timer`) |
 
 **Why this order matters:**
 - Prune removes old snapshot index files but does not free disk space
 - GC runs after prune and actually frees the unreferenced chunks (24h cutoff)
 - restic runs last, uploading only the clean post-prune datastore,
   then runs `forget` to enforce retention in Google Drive
+- Config backup runs after restic so it captures the final state of the night
 
 **Two separate retention systems:**
 - PBS prune → controls what stays in `/mnt/pbs` locally
 - restic forget → controls what stays in Google Drive
+
+## What Gets Backed Up
+
+| Backup | Contents | Destination | Schedule |
+|--------|----------|-------------|----------|
+| PBS | All VM/LXC snapshots (incremental, deduplicated) | `/mnt/pbs` | Nightly 02:00 |
+| restic | Full PBS datastore (`/mnt/pbs`) | Google Drive | Nightly (configurable) |
+| Config tar | `/var/lib/pve-cluster/config.db`, rclone OAuth token, restic password, `/etc/pve/`, `/etc/fstab`, network config, custom scripts | Google Drive | Nightly 04:00 |
+
+The **config tar** is what makes Scenario B (DR) self-contained — it contains everything needed to authenticate against Google Drive and decrypt backups, without requiring any manual setup.
+
+> ⚠️ **Keep tar and restic snapshots in sync.** Both are created nightly. In a DR, pick a
+> config tar and restic snapshot from the **same date** — they represent a consistent state.
+> Mixing (e.g. today's tar with last week's restic snapshot) means your PVE config will
+> reference VMs that don't exist in the restored datastore, or vice versa.
 
 ## Retention
 
@@ -61,6 +78,7 @@ Proxmox VE
 |---------|-----------|
 | PBS local | keep-last=3, keep-daily=3 |
 | Google Drive (restic) | keep-last=3, keep-daily=6, keep-weekly=3, keep-monthly=5 |
+| Google Drive (config tar) | 7 most recent tarballs (configurable via `CONFIG_KEEP_DAYS`) |
 
 Local retention is intentionally short — Google Drive handles long-term retention.
 
@@ -112,7 +130,8 @@ Key variables to set:
 | `PBS_USER_PASSWORD` | **Always change this from `changeme`!** |
 | `PBS_RETENTION_LOCAL` | Local PBS retention, default `keep-last=3,keep-daily=3` |
 | `RESTICPROFILE_GDRIVE_PATH` | Google Drive restic repo path |
-| `GDRIVE_CONFIG_FOLDER` | Google Drive config backup folder |
+| `GDRIVE_CONFIG_FOLDER` | Google Drive config backup folder name |
+| `CONFIG_KEEP_DAYS` | How many config tarballs to keep on Google Drive (default 7) |
 | `RESTIC_RETENTION_KEEP_*` | Remote retention settings |
 
 ---
@@ -192,7 +211,7 @@ The script will:
 - Mount the PBS partition and add it to /etc/fstab
 - Create PBS datastore, user and ACL
 - Create resticprofile config with retention settings from config.env
-- Install and enable the daily PVE config backup timer
+- Install and enable the daily PVE config backup timer (`pve-config-backup.timer`)
 
 > ⚠️ **Raspberry Pi 5 only:** The script detects if the kernel uses 16k page-size
 > (incompatible with PBS) and offers to fix it and reboot automatically.
@@ -254,8 +273,8 @@ rclone lsd gdrive:bu
 
 ```bash
 # Save password (path must match RESTIC_PASSWORD_FILE in config.env)
-echo 'YOUR-RESTIC-PASSWORD' > /etc/proxmox-backup-restore/restic-password
-chmod 600 /etc/proxmox-backup-restore/restic-password
+echo 'YOUR-RESTIC-PASSWORD' > /etc/resticprofile/restic-password
+chmod 600 /etc/resticprofile/restic-password
 
 # Init the restic repo in Google Drive
 source /etc/proxmox-backup-restore/config.env
@@ -292,8 +311,22 @@ pvesh create /nodes/$(hostname)/vzdump --all 1 --storage pbs-local --mode snapsh
 
 Use this when replacing failed hardware. You already have backups in Google Drive.
 
-> ℹ️ No need to set up rclone/OAuth manually — your existing rclone config and restic
-> password are stored in the config tarball on Google Drive. Just download it first.
+### How it works
+
+The nightly config backup (`pve-config-backup.timer`) creates a tarball containing:
+- `/var/lib/pve-cluster/config.db` — the PVE cluster database (VM/LXC configs, storage config, ACLs)
+- `/root/.config/rclone/` — rclone OAuth token for Google Drive access
+- `/etc/resticprofile/` — restic profiles and password file
+- `/etc/fstab`, network config, custom scripts
+
+Restoring this tarball on fresh hardware gives you back rclone auth, the restic password,
+**and** the full PVE configuration (all VM/LXC configs, storage definitions). No manual
+rclone/restic setup needed.
+
+> ⚠️ **Match your tar and restic snapshot dates.** Pick a config tar and restic snapshot
+> from the **same night**. The tar is named `pve-config-YYYY-MM-DD.tar.gz`; match it to
+> a restic snapshot from the same date (`restic snapshots` shows timestamps).
+> Mixing dates means your PVE config and PBS datastore will be out of sync.
 
 ### B0: Install Proxmox VE
 
@@ -303,30 +336,7 @@ Same as A0.
 
 Same as A1 — create and format a dedicated PBS partition on the new hardware.
 
-### B2: Download config tarball via browser
-
-On any computer with a browser:
-
-1. Go to https://drive.google.com
-2. Navigate to `bu/proxmox_home_config/` (or `proxmox_cabin_config/`)
-3. Download the latest `pve-config-YYYY-MM-DD.tar.gz`
-
-Copy it to the new Proxmox server and extract:
-```bash
-scp pve-config-YYYY-MM-DD.tar.gz root@YOUR-PVE-IP:/root/
-ssh root@YOUR-PVE-IP
-tar -xzf /root/pve-config-YYYY-MM-DD.tar.gz -C /
-```
-
-This restores rclone config, restic password, resticprofile config, fstab, network settings
-and all custom scripts — everything needed to reach Google Drive and decrypt backups.
-
-Verify rclone works:
-```bash
-rclone lsd gdrive:bu
-```
-
-### B3: Clone repo, edit config.env, run restore-1-install.sh
+### B2: Clone repo and run restore-1-install.sh
 
 ```bash
 apt-get install -y git
@@ -334,21 +344,45 @@ git clone https://github.com/d96moe/proxmox-backup-restore.git
 cd proxmox-backup-restore
 chmod +x *.sh
 cp config_x86_standard.env config.env   # or config_rpi5.env
-nano config.env                 # verify PBS_PARTITION matches new hardware, check password
+nano config.env                 # verify PBS_PARTITION matches new hardware
 ./restore-1-install.sh
 ```
 
-> ℹ️ rclone is already configured from the extracted tarball — skip OAuth setup.
+### B3: Download the config tarball
+
+On any computer with a browser:
+
+1. Go to https://drive.google.com
+2. Navigate to `bu/proxmox_home_config/` (or `proxmox_cabin_config/`)
+3. Download the `pve-config-YYYY-MM-DD.tar.gz` that matches the restic snapshot you plan to restore
+
+Copy it to the PVE server's `/tmp/`:
+```bash
+scp pve-config-YYYY-MM-DD.tar.gz root@YOUR-PVE-IP:/tmp/
+```
+
+> ℹ️ Do **not** extract the tarball manually — `restore-2-auth.sh` handles the extraction
+> correctly (stops pve-cluster first so the pmxcfs FUSE filesystem is unmounted, then restores
+> the cluster database and restarts pve-cluster).
 
 ### B4: Run restore-2-auth.sh
 
-Downloads and restores the full PBS datastore from Google Drive:
-
 ```bash
+cd proxmox-backup-restore
 ./restore-2-auth.sh
 ```
 
+The script will:
+1. Find the config tar in `/tmp/` (the one you copied in B3)
+2. Stop pve-cluster, clear stale WAL files, extract the tarball (restoring `config.db`, rclone auth, restic password), restart pve-cluster
+3. Verify rclone can reach Google Drive (now using the restored credentials)
+4. List available restic snapshots and prompt for confirmation
+5. Stop PBS, clear `/mnt/pbs`, restore the PBS datastore from Google Drive
+6. Print a summary on completion
+
 > ⚠️ Downloading the PBS datastore takes several hours (size depends on your setup).
+
+After this step, all your VM/LXC configs are already visible in the PVE GUI (restored from `config.db`). The PBS datastore is fully restored and ready.
 
 ### B5: Run restore-3-pve.sh
 
@@ -356,27 +390,36 @@ Downloads and restores the full PBS datastore from Google Drive:
 ./restore-3-pve.sh
 ```
 
-### B6: Restore VMs/LXCs via Proxmox GUI
+This wires PBS into PVE (updates the fingerprint on the existing PBS storage entry restored from `config.db`), starts PBS, and re-enables backup schedules.
 
-> ⚠️ After a full recovery there are no VMs yet — navigate to PBS storage directly:
+### B6: Restore VMs/LXCs
+
+Since `config.db` was restored in step B4, your VMs and LXCs appear in the GUI already.
+Restore them from the PBS snapshots:
 
 1. Open Proxmox web GUI
 2. Go to **Datacenter → Storage → pbs-local → Content** tab
-3. All PBS snapshots are listed here regardless of whether the VMs exist
-4. Select a snapshot → **Restore** → enter the VM/LXC ID
+3. All PBS snapshots are listed — select a snapshot → **Restore**
+4. The VM/LXC ID is pre-filled from config.db — verify it matches and click Restore
 5. Repeat for each VM/LXC
+
+> ℹ️ Alternatively, restore via CLI: `pct restore <vmid> pbs-local:backup/ct/<vmid>/<timestamp> --storage local`
 
 ---
 
 ## Verify Backup Health
 
 ```bash
-# Check restic timer status
+# Check nightly backup timers
+systemctl list-timers | grep -E "restic|pve-config"
 systemctl status restic-backup.timer
-systemctl list-timers | grep restic
+systemctl status pve-config-backup.timer
 
-# View last backup log
+# View last restic backup log
 journalctl -u restic-backup.service -n 50
+
+# View last config backup log
+journalctl -u pve-config-backup.service -n 20
 
 # List restic snapshots in Google Drive
 source /etc/proxmox-backup-restore/config.env
@@ -384,7 +427,9 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
   --password-file "${RESTIC_PASSWORD_FILE}" snapshots
 
 # Check PBS snapshots locally
-proxmox-backup-client snapshots --repository backup@pbs@127.0.0.1:local-store
+PBS_PASSWORD="<your-pbs-password>" PBS_FINGERPRINT="<fingerprint>" \
+  proxmox-backup-client snapshots \
+  --repository backup@pbs@127.0.0.1:local-store
 
 # Check PBS datastore disk usage
 df -h /mnt/pbs
@@ -394,6 +439,35 @@ df -i /mnt/pbs
 restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \
   --password-file "${RESTIC_PASSWORD_FILE}" unlock --remove-all
 ```
+
+---
+
+## CI Testing
+
+Two Jenkins pipelines verify the scripts end-to-end on a weekly basis:
+
+### Scenario A: `proxmox-restore-test` (nightly, `Jenkinsfile.restore-test`)
+
+Clones template VM 9001, runs the full setup flow and verifies backups reach Google Drive:
+1. Install PBS, rclone, restic, resticprofile (`restore-1-install.sh`)
+2. Create a minimal Debian 12 LXC as backup target
+3. PBS backup of the LXC
+4. Backup PVE config to Google Drive (`backup-pve-config.sh`, includes `config.db`)
+5. restic backup of PBS datastore to Google Drive
+6. Verify at least one restic snapshot exists in Google Drive
+
+### Scenario B: `proxmox-dr-test` (weekly Sunday, `Jenkinsfile.dr-test`)
+
+Simulates a full disaster recovery on a fresh VM:
+1. Install PBS, rclone, restic, resticprofile (`restore-1-install.sh`)
+2. Download config tar from Google Drive to `/tmp/`, then **delete rclone.conf** — forces the manual DR path (no pre-configured GDrive auth)
+3. Run `restore-2-auth.sh` — finds local tar, extracts it (restores rclone + config.db), uses rclone to restore PBS datastore from GDrive
+4. Verify `config.db` was restored: check LXC 100 (from Scenario A) is visible in PVE config
+5. Wire PBS into PVE (`restore-3-pve.sh`)
+6. Verify LXC snapshot is visible in PBS
+7. Restore LXC 100 from PBS and verify it starts — proves full end-to-end recovery
+
+> ℹ️ Scenario B depends on Scenario A having run at least once (needs a restic snapshot and config tar on Google Drive).
 
 ---
 
@@ -409,3 +483,14 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
 - **ARM64 (Pi5):** uses [pipbs](https://github.com/dexogen/pipbs) community repo for PBS.
   The pxvirt repo (lierfang) provides QEMU/KVM. Keep these repos separate — mixing versions
   can cause GUI rendering issues in the Proxmox web interface.
+- **config.db WAL checkpoint:** `backup-pve-config.sh` runs `PRAGMA wal_checkpoint(FULL)` before
+  archiving to ensure all recent writes (VM creates, storage changes) are flushed from the
+  SQLite WAL file into the main database. Without this, the backup could capture a stale
+  `config.db` missing recent changes.
+- **pmxcfs and config restore:** `/etc/pve/` is a FUSE filesystem managed by pmxcfs. Restoring
+  PVE config requires restoring `/var/lib/pve-cluster/config.db` (the underlying SQLite database),
+  not the `/etc/pve/` files directly. `restore-2-auth.sh` handles this by stopping pve-cluster
+  before extraction and restarting it after, so pmxcfs rebuilds `/etc/pve/` from the restored database.
+- **proxmox-backup-client auth:** when running non-interactively, set `PBS_PASSWORD` and
+  `PBS_FINGERPRINT` environment variables. The `--fingerprint` flag does not exist on the
+  `snapshots` subcommand — use the env var instead.
