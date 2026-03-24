@@ -32,6 +32,11 @@ TARBALL="/tmp/pve-config-${TIMESTAMP}.tar.gz"
 echo "=== Backing up Proxmox host config to Google Drive ==="
 echo "    Destination: ${GDRIVE_CONFIG_PATH}"
 
+# Checkpoint SQLite WAL into the main database before archiving.
+# pmxcfs may have recent writes only in the WAL file; without this the
+# backup captures a stale config.db that is missing recent changes.
+sqlite3 /var/lib/pve-cluster/config.db "PRAGMA wal_checkpoint(FULL);" 2>/dev/null || true
+
 # Create tarball of critical config files
 # /boot/firmware/config.txt is Pi5-specific — harmless to include on x86 (will just be missing)
 tar -czf "${TARBALL}" \
