@@ -23,10 +23,9 @@ STORAGE="local-lvm"
 IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-arm64.qcow2"
 IMAGE_PATH="/var/lib/vz/template/iso/debian-12-generic-arm64.qcow2"
 
-# Jenkins SSH pubkey — same key used for template 9001
-JENKINS_PUBKEY=$(cat /var/lib/jenkins/.ssh/id_ed25519.pub 2>/dev/null \
-    || grep -r 'ssh-ed25519' /root/.ssh/authorized_keys 2>/dev/null | head -1 \
-    || { echo "ERROR: cannot find Jenkins pubkey"; exit 1; })
+# Jenkins SSH pubkey — extract from template 9001 (same key, URL-decoded)
+JENKINS_PUBKEY=$(qm config 9001 | grep sshkeys | sed 's/sshkeys: //' | python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))")
+[ -z "$JENKINS_PUBKEY" ] && { echo "ERROR: cannot extract Jenkins pubkey from template 9001"; exit 1; }
 
 echo "=== Step 1: Install arm64 UEFI firmware ==="
 apt-get install -y qemu-efi-aarch64
@@ -58,7 +57,7 @@ qm create $TEMPLATE_ID \
     --arch aarch64 \
     --machine virt \
     --bios ovmf \
-    --cpu cortex-a72 \
+    --cpu max \
     --cores 2 \
     --memory 2048 \
     --net0 virtio,bridge=vmbr0 \
@@ -82,12 +81,14 @@ qm set $TEMPLATE_ID --scsi1 ${STORAGE}:4,format=raw
 qm set $TEMPLATE_ID --ide2 ${STORAGE}:cloudinit,media=cdrom
 
 echo "=== Step 7: Configure cloud-init ==="
-ENCODED_KEY=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip()))" <<< "$JENKINS_PUBKEY")
+TMPKEY=$(mktemp)
+echo "$JENKINS_PUBKEY" > "$TMPKEY"
 qm set $TEMPLATE_ID \
     --ciuser root \
     --ipconfig0 ip=${VM_IP}/24,gw=${GATEWAY} \
     --nameserver 8.8.8.8 \
-    --sshkeys "$ENCODED_KEY"
+    --sshkeys "$TMPKEY"
+rm -f "$TMPKEY"
 
 echo "=== Step 8: Convert to template ==="
 qm template $TEMPLATE_ID
