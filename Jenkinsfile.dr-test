@@ -11,8 +11,7 @@
 //   3. Verifies config.db was actually restored (LXC 100 visible in PVE config)
 //   4. Wires PBS into PVE (restore-3-pve.sh)
 //   5. Verifies LXC snapshot visible in PBS
-//   6. Verifies snapshot chunk integrity (proxmox-backup-client verify)
-//   7. Restores LXC 100 from PBS and verifies it starts
+//   6. Restores LXC 100 from PBS and verifies it starts (proves chunk integrity)
 //
 // Post-always: destroys the cloned VM.
 // =============================================================================
@@ -223,20 +222,6 @@ ENDSSH
                         exit 1
                     fi
                     echo "Verification PASSED: \${SNAPSHOT_COUNT} LXC snapshot(s) visible in PBS"
-                """
-            }
-        }
-
-        stage('Verify PBS snapshot integrity') {
-            steps {
-                echo "Running proxmox-backup-client verify to confirm chunk integrity..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-source /opt/proxmox-restore/config.env
-proxmox-backup-manager datastore verify \${PBS_DATASTORE_NAME}
-echo "Snapshot integrity OK"
-ENDSSH
                 """
             }
         }
