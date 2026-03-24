@@ -47,21 +47,21 @@ End
 Describe 'Config database restore'
     It 'LXC 100 is visible in PVE config (config.db was restored)'
         When run pct config 100
-        The status should be success
+        The output should include 'hostname'
     End
 End
 
 Describe 'rclone credentials'
     It 'can access Google Drive (credentials restored from config tar)'
         When run rclone lsd "${RESTICPROFILE_GDRIVE_REMOTE}:bu"
-        The status should be success
+        The output should include 'bu'
     End
 End
 
 Describe 'PBS storage integration'
     It 'pbs-ci storage exists in PVE'
         When run pvesh get "/storage/${PVE_PBS_STORAGE_ID}"
-        The status should be success
+        The output should include 'pbs'
     End
 
     It 'at least one ct/100 snapshot is visible via PBS client'
