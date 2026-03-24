@@ -37,6 +37,13 @@ count_pbs_ct100_snapshots_via_client() {
 # Tests
 # -----------------------------------------------------------------------------
 
+Describe 'Prerequisites'
+    It 'restic snapshot repo exists in GDrive bu/ci-restore-test (run proxmox-shellspec / Scenario A at least once first)'
+        When run rclone lsd "${RESTICPROFILE_GDRIVE_REMOTE}:bu"
+        The output should include 'ci-restore-test'
+    End
+End
+
 Describe 'PVE cluster'
     It 'pve-cluster is active after config restore'
         When run systemctl is-active pve-cluster
