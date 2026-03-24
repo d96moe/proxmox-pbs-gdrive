@@ -275,8 +275,16 @@ ENDSSH
             steps {
                 echo "Running ShellSpec integration tests for Scenario A..."
                 sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+cd /opt/proxmox-restore
+echo "shellspec path: \$(which shellspec 2>/dev/null || echo NOT FOUND)"
+echo "config.env exists: \$(test -f config.env && echo YES || echo NO)"
+echo ".shellspec exists: \$(test -f .shellspec && echo YES || echo NO)"
+echo "spec/ contents: \$(ls spec/)"
+ENDSSH
                     ssh ${SSH_OPTS} root@${VM_IP} \
-                        'cd /opt/proxmox-restore && shellspec --shell bash --format junit spec/scenario_a_spec.sh' \
+                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_a_spec.sh' \
                         > shellspec-a.xml
                 """
             }
