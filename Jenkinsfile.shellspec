@@ -1,0 +1,111 @@
+// =============================================================================
+// Jenkinsfile.shellspec  —  ShellSpec development pipeline
+//
+// Runs ShellSpec integration tests against a pre-configured CI VM.
+// Intended for rapid iteration when writing/debugging spec files —
+// no VM clone, no backup/restore setup, just ShellSpec.
+//
+// Prerequisites:
+//   - A CI VM is already running at VM_IP with the full restore scenario
+//     completed (PBS running, GDrive snapshots taken, LXC 100 present, etc.)
+//   - The scripts dir (SCRIPTS_DIR) exists on the VM with config.env in place.
+//
+// Typical workflow:
+//   1. Run proxmox-restore-test or proxmox-dr-test with KEEP_VM=true (TODO)
+//      — or temporarily comment out the post-always destroy step.
+//   2. Trigger this pipeline with the correct VM_IP and SCENARIO.
+//   3. Iterate spec files, re-trigger this pipeline each time (~30s total).
+// =============================================================================
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    parameters {
+        string(
+            name: 'VM_IP',
+            defaultValue: '192.168.0.251',
+            description: 'IP of the pre-configured CI VM to run ShellSpec against'
+        )
+        choice(
+            name: 'SCENARIO',
+            choices: ['a', 'b', 'both'],
+            description: 'Which scenario spec to run: a = restore-test, b = dr-test, both = run both'
+        )
+    }
+
+    environment {
+        SSH_OPTS    = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -i /var/lib/jenkins/.ssh/id_ed25519"
+        SCRIPTS_DIR = "/opt/proxmox-restore"
+    }
+
+    stages {
+
+        stage('Deploy scripts') {
+            steps {
+                echo "Syncing current spec/ checkout to CI VM at ${params.VM_IP}..."
+                sh """
+                    scp ${SSH_OPTS} -r \
+                        ${WORKSPACE}/. \
+                        root@${params.VM_IP}:${SCRIPTS_DIR}/
+                """
+            }
+        }
+
+        stage('Install / verify ShellSpec') {
+            steps {
+                sh """
+                    ssh ${SSH_OPTS} root@${params.VM_IP} bash -s << 'ENDSSH'
+if command -v shellspec >/dev/null 2>&1; then
+    echo "shellspec already installed: \$(shellspec --version)"
+else
+    echo "Installing ShellSpec..."
+    curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
+fi
+ENDSSH
+                """
+            }
+        }
+
+        stage('Run ShellSpec (Scenario A)') {
+            when { expression { params.SCENARIO == 'a' || params.SCENARIO == 'both' } }
+            steps {
+                echo "Running scenario_a_spec.sh against ${params.VM_IP}..."
+                sh """
+                    ssh ${SSH_OPTS} root@${params.VM_IP} \
+                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_a_spec.sh' \
+                        > shellspec-a.xml
+                """
+            }
+        }
+
+        stage('Run ShellSpec (Scenario B)') {
+            when { expression { params.SCENARIO == 'b' || params.SCENARIO == 'both' } }
+            steps {
+                echo "Running scenario_b_spec.sh against ${params.VM_IP}..."
+                sh """
+                    ssh ${SSH_OPTS} root@${params.VM_IP} \
+                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_b_spec.sh' \
+                        > shellspec-b.xml
+                """
+            }
+        }
+
+    } // stages
+
+    post {
+        always {
+            junit allowEmptyResults: true, testResults: 'shellspec-*.xml'
+        }
+        success {
+            echo "ShellSpec PASSED"
+        }
+        failure {
+            echo "ShellSpec FAILED — check logs above"
+        }
+    }
+}
