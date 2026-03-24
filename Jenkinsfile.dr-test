@@ -234,7 +234,7 @@ ENDSSH
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
 source /opt/proxmox-restore/config.env
-proxmox-backup-manager datastore verify ${PBS_DATASTORE_NAME}
+proxmox-backup-manager datastore verify \${PBS_DATASTORE_NAME}
 echo "Snapshot integrity OK"
 ENDSSH
                 """
