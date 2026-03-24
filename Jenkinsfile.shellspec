@@ -1,20 +1,12 @@
 // =============================================================================
-// Jenkinsfile.shellspec  —  ShellSpec development pipeline
+// Jenkinsfile.shellspec  —  Scenario A: Install + Backup CI Pipeline (ShellSpec)
 //
-// Runs ShellSpec integration tests against a pre-configured CI VM.
-// Intended for rapid iteration when writing/debugging spec files —
-// no VM clone, no backup/restore setup, just ShellSpec.
+// Drop-in replacement for Jenkinsfile.restore-test.
+// Identical setup stages; replaces the inline "Verify GDrive snapshot"
+// assertion with a ShellSpec run that produces a JUnit XML report.
 //
-// Prerequisites:
-//   - A CI VM is already running at VM_IP with the full restore scenario
-//     completed (PBS running, GDrive snapshots taken, LXC 100 present, etc.)
-//   - The scripts dir (SCRIPTS_DIR) exists on the VM with config.env in place.
-//
-// Typical workflow:
-//   1. Run proxmox-restore-test or proxmox-dr-test with KEEP_VM=true (TODO)
-//      — or temporarily comment out the post-always destroy step.
-//   2. Trigger this pipeline with the correct VM_IP and SCENARIO.
-//   3. Iterate spec files, re-trigger this pipeline each time (~30s total).
+// Plan: once ShellSpec tests are proven stable, delete proxmox-restore-test
+// and promote this job as the primary Scenario A pipeline.
 // =============================================================================
 
 pipeline {
@@ -25,72 +17,236 @@ pipeline {
         timestamps()
     }
 
-    parameters {
-        string(
-            name: 'VM_IP',
-            defaultValue: '192.168.0.251',
-            description: 'IP of the pre-configured CI VM to run ShellSpec against'
-        )
-        choice(
-            name: 'SCENARIO',
-            choices: ['a', 'b', 'both'],
-            description: 'Which scenario spec to run: a = restore-test, b = dr-test, both = run both'
-        )
+    triggers {
+        cron('H 3 * * *')
     }
 
     environment {
-        SSH_OPTS    = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -i /var/lib/jenkins/.ssh/id_ed25519"
-        SCRIPTS_DIR = "/opt/proxmox-restore"
+        VM_ID         = "9${String.format('%02d', (env.BUILD_NUMBER.toInteger() % 100) + 50)}"
+        VM_IP         = "192.168.0.251"
+        PVE_HOST      = "192.168.0.200"
+        SSH_KEY       = "/var/lib/jenkins/.ssh/id_ed25519"
+        SSH_OPTS      = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -i /var/lib/jenkins/.ssh/id_ed25519"
+        SCRIPTS_DIR   = "/opt/proxmox-restore"
+        GDRIVE_REPO   = "rclone:gdrive:bu/ci-restore-test"
+        RESTIC_PW     = "/etc/resticprofile/restic-password"
     }
 
     stages {
 
-        stage('Deploy scripts') {
+        stage('Clone VM') {
             steps {
-                echo "Syncing current spec/ checkout to CI VM at ${params.VM_IP}..."
+                echo "Cloning template 9001 -> VM ${VM_ID} (${env.BUILD_TAG})"
                 sh """
-                    scp ${SSH_OPTS} -r \
-                        ${WORKSPACE}/. \
-                        root@${params.VM_IP}:${SCRIPTS_DIR}/
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "qm clone 9001 ${VM_ID} --name restore-ci --full 1"
                 """
             }
         }
 
-        stage('Install / verify ShellSpec') {
+        stage('Start VM + wait for SSH') {
             steps {
+                sh "ssh ${SSH_OPTS} root@${PVE_HOST} 'qm start ${VM_ID}'"
+                echo "Waiting for SSH at ${VM_IP} (max 150s)..."
                 sh """
-                    ssh ${SSH_OPTS} root@${params.VM_IP} bash -s << 'ENDSSH'
-if command -v shellspec >/dev/null 2>&1; then
-    echo "shellspec already installed: \$(shellspec --version)"
-else
-    echo "Installing ShellSpec..."
-    curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
-fi
+                    for i in \$(seq 1 30); do
+                        ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH ready" && exit 0
+                        echo "  attempt \$i/30..."
+                        sleep 5
+                    done
+                    echo "ERROR: VM did not become reachable within 150 seconds"
+                    exit 1
+                """
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+grep -E '^192\\.168\\.0\\.251.*restore-ci' /etc/hosts || echo '192.168.0.251 restore-ci.local restore-ci' >> /etc/hosts
+systemctl reset-failed pve-cluster 2>/dev/null || true
+systemctl restart pve-cluster
+echo "pve-cluster started, waiting 5s..."
+sleep 5
+systemctl is-active pve-cluster && echo "pve-cluster: OK" || { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
+ENDSSH
+                """
+            }
+        }
+
+        stage('Prepare disk') {
+            steps {
+                echo "Formatting /dev/sdb (PBS partition) with ext4..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+systemctl stop mnt-pbs.mount 2>/dev/null || true
+umount -f /mnt/pbs 2>/dev/null || true
+umount -f /dev/sdb 2>/dev/null || true
+sleep 1
+mkfs.ext4 -F -F -m 0 /dev/sdb
+ENDSSH
+                """
+            }
+        }
+
+        stage('Copy credentials') {
+            steps {
+                echo "Copying rclone.conf and restic-password from PVE host to CI VM..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "mkdir -p /root/.config/rclone /etc/resticprofile"
+
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "cat /root/.config/rclone/rclone.conf" | \
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "cat > /root/.config/rclone/rclone.conf"
+
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "cat /etc/resticprofile/restic-password" | \
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "cat > /etc/resticprofile/restic-password"
+                """
+            }
+        }
+
+        stage('Deploy scripts') {
+            steps {
+                echo "Copying proxmox_restore checkout to CI VM..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} "mkdir -p ${SCRIPTS_DIR}"
+                    scp ${SSH_OPTS} -r \
+                        ${WORKSPACE}/. \
+                        root@${VM_IP}:${SCRIPTS_DIR}/
+                """
+            }
+        }
+
+        stage('Install tools') {
+            steps {
+                echo "Installing PBS, rclone, restic, resticprofile on CI VM..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+cp config_ci.env config.env
+CI=true bash restore-1-install.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Install ShellSpec') {
+            steps {
+                echo "Installing ShellSpec on CI VM..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
+shellspec --version
+ENDSSH
+                """
+            }
+        }
+
+        stage('Create test LXC') {
+            steps {
+                echo "Creating minimal Debian 12 LXC (ID 100) as backup target..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+
+pveam update
+
+DEBIAN12_TMPL=\$(pveam available --section system 2>/dev/null \
+    | awk '/debian-12-standard/ {print \$2}' | sort -V | tail -1)
+[ -z "\${DEBIAN12_TMPL}" ] && DEBIAN12_TMPL="debian-12-standard_12.12-1_amd64.tar.zst"
+
+pveam download local "\${DEBIAN12_TMPL}"
+
+LOCAL_TMPL=\$(pveam list local 2>/dev/null \
+    | awk '/debian-12-standard/ {print \$1}' | sort -V | tail -1)
+[ -z "\${LOCAL_TMPL}" ] && { echo "ERROR: no debian-12 template in local"; exit 1; }
+
+pct create 100 "\${LOCAL_TMPL}" \
+    --hostname ci-test-lxc \
+    --memory 64 \
+    --rootfs local:1 \
+    --net0 name=eth0,bridge=vmbr0,ip=10.10.0.50/24,gw=10.10.0.1 \
+    --unprivileged 1 \
+    --start 1
+
+echo "Test LXC 100 created and started"
+pct status 100
+ENDSSH
+                """
+            }
+        }
+
+        stage('PBS backup') {
+            steps {
+                echo "Taking PBS backup of test LXC 100 -> pbs-ci storage..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+source /opt/proxmox-restore/config.env
+
+FINGERPRINT=\$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (sha256):" | awk '{print \$NF}')
+pvesh create /storage \
+    --storage "\${PVE_PBS_STORAGE_ID}" \
+    --type pbs \
+    --server "\${PVE_PBS_SERVER}" \
+    --datastore "\${PBS_DATASTORE_NAME}" \
+    --username "\${PBS_USER}" \
+    --password "\${PBS_USER_PASSWORD}" \
+    --fingerprint "\${FINGERPRINT}" \
+    --content backup \
+    --prune-backups "\${PBS_RETENTION_LOCAL}" || true
+
+systemctl is-active --quiet pvedaemon || systemctl start pvedaemon pveproxy pvestatd
+sleep 3
+
+vzdump 100 --storage "\${PVE_PBS_STORAGE_ID}" --mode snapshot --compress zstd
+echo "PBS backup complete"
+ENDSSH
+                """
+            }
+        }
+
+        stage('Backup PVE config to GDrive') {
+            steps {
+                echo "Backing up PVE host config to Google Drive..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+/usr/local/bin/backup-pve-config.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Restic backup to GDrive') {
+            steps {
+                echo "Backing up PBS datastore to Google Drive via resticprofile..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+/usr/local/bin/stop-proxmox-backup.sh
+
+resticprofile \
+    -c /etc/resticprofile/profiles.yaml \
+    -n pbs-backup \
+    backup
+
+systemctl start proxmox-backup proxmox-backup-proxy
+echo "Restic backup to GDrive complete"
 ENDSSH
                 """
             }
         }
 
         stage('Run ShellSpec (Scenario A)') {
-            when { expression { params.SCENARIO == 'a' || params.SCENARIO == 'both' } }
             steps {
-                echo "Running scenario_a_spec.sh against ${params.VM_IP}..."
+                echo "Running ShellSpec integration tests..."
                 sh """
-                    ssh ${SSH_OPTS} root@${params.VM_IP} \
+                    ssh ${SSH_OPTS} root@${VM_IP} \
                         'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_a_spec.sh' \
                         > shellspec-a.xml
-                """
-            }
-        }
-
-        stage('Run ShellSpec (Scenario B)') {
-            when { expression { params.SCENARIO == 'b' || params.SCENARIO == 'both' } }
-            steps {
-                echo "Running scenario_b_spec.sh against ${params.VM_IP}..."
-                sh """
-                    ssh ${SSH_OPTS} root@${params.VM_IP} \
-                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_b_spec.sh' \
-                        > shellspec-b.xml
                 """
             }
         }
@@ -100,12 +256,31 @@ ENDSSH
     post {
         always {
             junit allowEmptyResults: true, testResults: 'shellspec-*.xml'
+
+            echo "=== Cleanup ==="
+
+            // Prune old GDrive test snapshots (keep last 1 to allow DR pipeline to run)
+            sh """
+                ssh ${SSH_OPTS} root@${VM_IP} \
+                    "restic -r ${GDRIVE_REPO} \
+                            --password-file ${RESTIC_PW} \
+                            forget --keep-last 1 --prune" \
+                    || true
+            """
+
+            // Destroy the cloned VM
+            sh """
+                ssh ${SSH_OPTS} root@${PVE_HOST} \
+                    "qm stop ${VM_ID} 2>/dev/null || true; sleep 5; qm destroy ${VM_ID} --purge 1" \
+                    || true
+            """
+            echo "VM ${VM_ID} destroyed"
         }
         success {
-            echo "ShellSpec PASSED"
+            echo "ShellSpec pipeline PASSED"
         }
         failure {
-            echo "ShellSpec FAILED — check logs above"
+            echo "ShellSpec pipeline FAILED — check logs above"
         }
     }
 }
