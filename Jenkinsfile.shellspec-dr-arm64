@@ -43,6 +43,8 @@ pipeline {
                 sh """
                     ssh ${SSH_OPTS} root@${PVE_HOST} \
                         "qm clone 9002 ${VM_ID} --name restore-ci-arm64 --full 1"
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "qm resize ${VM_ID} scsi0 32G"
                 """
             }
         }

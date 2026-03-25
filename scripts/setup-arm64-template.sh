@@ -83,8 +83,11 @@ qm importdisk $TEMPLATE_ID "$IMAGE_PATH" $STORAGE
 echo "=== Step 6: Attach disks ==="
 # =============================================================================
 qm set $TEMPLATE_ID \
-    --scsi0 ${STORAGE}:vm-${TEMPLATE_ID}-disk-0,discard=on,size=32G \
+    --scsi0 ${STORAGE}:vm-${TEMPLATE_ID}-disk-0,discard=on \
     --boot order=scsi0
+
+# Resize OS disk to 32G (importdisk imports at cloud image size ~3G)
+qm resize $TEMPLATE_ID scsi0 32G
 
 # PBS data disk — formatted fresh each CI run by the pipeline
 qm set $TEMPLATE_ID --scsi1 ${STORAGE}:4,format=raw
