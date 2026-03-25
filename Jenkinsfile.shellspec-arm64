@@ -81,7 +81,11 @@ systemctl stop proxmox-backup proxmox-backup-proxy proxmox-backup-watchdog 2>/de
 fuser -km /mnt/pbs 2>/dev/null || true
 systemctl stop mnt-pbs.mount 2>/dev/null || true
 umount -fl /mnt/pbs 2>/dev/null || true
-sleep 2
+udevadm settle
+echo "=== fuser /dev/sdb ==="
+fuser -v /dev/sdb 2>/dev/null || echo "(none)"
+echo "=== lsblk ==="
+lsblk /dev/sdb
 mkfs.ext4 -F -F -m 0 /dev/sdb
 ENDSSH
                 """
