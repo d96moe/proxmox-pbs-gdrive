@@ -32,6 +32,8 @@ systemctl stop apt-daily.timer apt-daily-upgrade.timer \
     unattended-upgrades 2>/dev/null || true
 pkill -x apt-get 2>/dev/null || true
 sleep 2
+# Remove potentially corrupted binary cache files (left by killed apt-daily)
+rm -f /var/cache/apt/pkgcache.bin /var/cache/apt/srcpkgcache.bin
 
 # Helper: kill any background apt and wait for lists lock before running apt-get
 apt_get() {
