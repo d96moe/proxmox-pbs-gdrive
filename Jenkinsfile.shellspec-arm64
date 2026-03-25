@@ -74,7 +74,7 @@ ENDSSH
 
         stage('Prepare disk') {
             steps {
-                echo "Formatting /dev/sdb (PBS partition) with ext4..."
+                echo "Formatting PBS data disk with ext4..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 systemctl stop proxmox-backup proxmox-backup-proxy proxmox-backup-watchdog 2>/dev/null || true
@@ -82,11 +82,13 @@ fuser -km /mnt/pbs 2>/dev/null || true
 systemctl stop mnt-pbs.mount 2>/dev/null || true
 umount -fl /mnt/pbs 2>/dev/null || true
 udevadm settle
-echo "=== fuser /dev/sdb ==="
-fuser -v /dev/sdb 2>/dev/null || echo "(none)"
-echo "=== lsblk ==="
-lsblk /dev/sdb
-mkfs.ext4 -F -F -m 0 /dev/sdb
+echo "=== all disks ==="
+lsblk -nd -o NAME,SIZE,MOUNTPOINT
+ROOT_DISK=\$(lsblk -ndo PKNAME \$(findmnt -n -o SOURCE /) 2>/dev/null | head -1)
+DATA_DISK=\$(lsblk -nd -o NAME | grep -v "^\${ROOT_DISK}\$" | head -1)
+echo "Root disk: /dev/\${ROOT_DISK}  Data disk: /dev/\${DATA_DISK}"
+[ -z "\${DATA_DISK}" ] && { echo "ERROR: data disk not found"; exit 1; }
+mkfs.ext4 -F -F -m 0 /dev/\${DATA_DISK}
 ENDSSH
                 """
             }
