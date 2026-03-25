@@ -187,6 +187,18 @@ EOF
     exit 0
 fi
 
+# On aarch64 after PVE reboot, resolvconf (installed by pxvirt) may have
+# recreated /etc/resolv.conf as a symlink, overwriting the static file
+# written in Step 0. Check and fix DNS before anything else.
+if [ "${ARCH}" = "aarch64" ]; then
+    if ! getent hosts deb.debian.org &>/dev/null 2>&1; then
+        echo "  DNS not working after reboot — fixing /etc/resolv.conf..."
+        rm -f /etc/resolv.conf
+        printf "nameserver %s\nnameserver 1.1.1.1\n" "${PVE_DNS:-8.8.8.8}" > /etc/resolv.conf
+        echo "  resolv.conf: $(cat /etc/resolv.conf)"
+    fi
+fi
+
 echo "=== Configuration loaded ==="
 echo "  Architecture:     ${ARCH}"
 echo "  PBS partition:    ${PBS_PARTITION}"
