@@ -182,7 +182,7 @@ echo "=== Step 2: Install rclone ==="
 curl https://rclone.org/install.sh | bash
 
 echo "=== Step 3: Install restic ==="
-apt_get install -y restic
+apt_get install -y restic unzip
 
 echo "=== Step 4: Install resticprofile ==="
 curl -sfL https://raw.githubusercontent.com/creativeprojects/resticprofile/master/install.sh | sh
