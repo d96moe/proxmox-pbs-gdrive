@@ -124,15 +124,15 @@ cp config_ci_arm64.env config.env
 CI=true bash restore-1-install.sh
 ENDSSH
                 """
-                echo "VM is rebooting after pxvirt install. Waiting for SSH (max 600s)..."
+                echo "VM is rebooting after pxvirt install. Waiting for SSH (max 150s)..."
                 sh """
                     sleep 30
-                    for i in \$(seq 1 114); do
+                    for i in \$(seq 1 24); do
                         ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH ready after reboot" && exit 0
-                        echo "  attempt \$i/114..."
+                        echo "  attempt \$i/24..."
                         sleep 5
                     done
-                    echo "ERROR: VM did not come back within 600 seconds"
+                    echo "ERROR: VM did not come back within 150 seconds"
                     exit 1
                 """
             }
