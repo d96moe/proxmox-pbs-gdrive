@@ -206,6 +206,10 @@ fi
 echo "  Mounted ${PBS_PARTITION} at ${PBS_DATASTORE_PATH}"
 df -h ${PBS_DATASTORE_PATH}
 
+# Ensure PBS daemon is running before datastore/user operations
+systemctl start proxmox-backup proxmox-backup-proxy 2>/dev/null || true
+sleep 5
+
 echo "=== Step 6: Create PBS datastore ==="
 proxmox-backup-manager datastore create ${PBS_DATASTORE_NAME} ${PBS_DATASTORE_PATH}
 
