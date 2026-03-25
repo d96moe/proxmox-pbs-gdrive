@@ -107,6 +107,9 @@ if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
         echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
     fi
 
+    # Update package lists before installing anything
+    apt_get update
+
     # Configure vmbr0 bridge
     apt_get install -y ifupdown2
     cat > /etc/network/interfaces << EOF

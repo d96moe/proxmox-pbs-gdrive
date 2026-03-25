@@ -140,6 +140,7 @@ ENDSSH
             steps {
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+command -v pvesh &>/dev/null || { echo "ERROR: pvesh not found — pxvirt install failed in Step 0"; exit 1; }
 HOSTNAME=\$(hostname)
 grep -qF "192.168.0.252 \${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
 systemctl reset-failed pve-cluster 2>/dev/null || true
