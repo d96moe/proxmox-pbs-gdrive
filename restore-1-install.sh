@@ -26,6 +26,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARCH="$(uname -m)"
 
+# Stop background apt timers to prevent lock conflicts
+systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
+
+# Helper: run apt-get with automatic lock wait (up to 5 minutes)
+apt_get() { apt-get -o DPkg::Lock::Timeout=300 "$@"; }
+
 # Load configuration
 if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
     echo "ERROR: config.env not found in ${SCRIPT_DIR}"
@@ -141,7 +147,7 @@ fi
 echo "=== Step 1: Install Proxmox Backup Server ==="
 if [ "${ARCH}" = "aarch64" ]; then
     echo "  ARM64 detected — using community pipbs repository..."
-    apt-get install -y ca-certificates curl gnupg
+    apt_get install -y ca-certificates curl gnupg
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
         | gpg --batch --no-tty --dearmor \
@@ -153,18 +159,18 @@ else
     echo "deb http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription" \
         > /etc/apt/sources.list.d/pbs.list
 fi
-apt-get update
-apt-get install -y proxmox-backup-server
+apt_get update
+apt_get install -y proxmox-backup-server
 
 # Remove enterprise repos that PBS installer adds automatically (require subscription, cause 401)
 rm -f /etc/apt/sources.list.d/*enterprise*
-apt-get update -qq
+apt_get update -qq
 
 echo "=== Step 2: Install rclone ==="
 curl https://rclone.org/install.sh | bash
 
 echo "=== Step 3: Install restic ==="
-apt-get install -y restic
+apt_get install -y restic
 
 echo "=== Step 4: Install resticprofile ==="
 curl -sfL https://raw.githubusercontent.com/creativeprojects/resticprofile/master/install.sh | sh
