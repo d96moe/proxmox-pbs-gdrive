@@ -60,7 +60,8 @@ pipeline {
                 """
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-grep -E '^192\\.168\\.0\\.252.*restore-ci-arm64' /etc/hosts || echo '192.168.0.252 restore-ci-arm64.local restore-ci-arm64' >> /etc/hosts
+HOSTNAME=\$(hostname)
+grep -qF "\${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
 systemctl reset-failed pve-cluster 2>/dev/null || true
 systemctl restart pve-cluster
 sleep 5
@@ -72,14 +73,19 @@ ENDSSH
 
         stage('Prepare disk') {
             steps {
-                echo "Formatting /dev/sdb (PBS partition) with ext4..."
+                echo "Formatting PBS data disk with ext4..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+systemctl stop proxmox-backup proxmox-backup-proxy proxmox-backup-watchdog 2>/dev/null || true
+fuser -km /mnt/pbs 2>/dev/null || true
 systemctl stop mnt-pbs.mount 2>/dev/null || true
-umount -f /mnt/pbs 2>/dev/null || true
-umount -f /dev/sdb 2>/dev/null || true
-sleep 1
-mkfs.ext4 -F -F -m 0 /dev/sdb
+umount -fl /mnt/pbs 2>/dev/null || true
+udevadm settle
+ROOT_DISK=\$(lsblk -ndo PKNAME \$(findmnt -n -o SOURCE /) 2>/dev/null | head -1)
+DATA_DISK=\$(lsblk -nd -o NAME | grep -v "^\${ROOT_DISK}\$" | head -1)
+echo "Root disk: /dev/\${ROOT_DISK}  Data disk: /dev/\${DATA_DISK}"
+[ -z "\${DATA_DISK}" ] && { echo "ERROR: data disk not found"; lsblk; exit 1; }
+mkfs.ext4 -F -F -m 0 /dev/\${DATA_DISK}
 ENDSSH
                 """
             }
@@ -137,6 +143,7 @@ ENDSSH
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
+apt-get install -y -q git
 curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
 shellspec --version
 ENDSSH
