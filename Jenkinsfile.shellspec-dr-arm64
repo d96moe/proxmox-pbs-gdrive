@@ -203,6 +203,11 @@ ENDSSH
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
+# Create vmbr0 bridge if missing (needed for LXC network config)
+if ! ip link show vmbr0 &>/dev/null; then
+    ip link add name vmbr0 type bridge 2>/dev/null || true
+    ip link set vmbr0 up
+fi
 systemctl is-active --quiet pvedaemon || systemctl start pvedaemon pveproxy pvestatd
 sleep 3
 
