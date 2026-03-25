@@ -151,6 +151,12 @@ EOF
         echo "  4k kernel configured (kernel=kernel8.img)"
     fi
 
+    # Disable systemd-networkd — Debian cloud images use it by default,
+    # but PVE requires ifupdown2/networking.service to manage vmbr0.
+    # Both running after reboot causes the bridge to fail silently.
+    systemctl disable systemd-networkd systemd-networkd-wait-online 2>/dev/null || true
+    systemctl mask systemd-networkd 2>/dev/null || true
+
     PVE_IP_ADDR="${PVE_IP%/*}"
     echo ""
     echo "=== Proxmox VE installed. Rebooting in 5 seconds... ==="
