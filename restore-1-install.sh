@@ -165,17 +165,13 @@ EOF
         echo "  4k kernel configured (kernel=kernel8.img)"
     fi
 
-    # Disable systemd-networkd — Debian cloud images use it by default,
-    # but PVE requires ifupdown2/networking.service to manage vmbr0.
-    # Both running after reboot causes the bridge to fail silently.
-    systemctl disable systemd-networkd systemd-networkd-wait-online 2>/dev/null || true
-    systemctl mask systemd-networkd 2>/dev/null || true
-
-    # Write resolv.conf directly — /etc/resolv.conf may be a symlink to
-    # systemd-resolved's stub which breaks after masking systemd-networkd.
-    rm -f /etc/resolv.conf
-    echo "nameserver ${PVE_DNS}" > /etc/resolv.conf
-    echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+    # Disable cloud-init network management so our interfaces config persists.
+    # Do NOT mask systemd-networkd — pxvirt installs resolvconf which feeds
+    # DNS from dns-nameservers in /etc/network/interfaces. Masking networkd
+    # breaks resolvconf's DNS population after reboot.
+    if [ -d /etc/cloud ]; then
+        echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    fi
 
     PVE_IP_ADDR="${PVE_IP%/*}"
     echo ""
