@@ -1,24 +1,28 @@
 #!/bin/bash
 # =============================================================================
 # restore-1-install.sh
-# Step 1: Install PBS, rclone, restic, resticprofile and prepare storage
+# Step 1 (and Step 0 on arm64): Install Proxmox VE if needed, then install
+# PBS, rclone, restic, resticprofile and prepare storage.
+#
+# Starting points:
+#   x86_64:  Proxmox VE already installed from ISO. Run this script once.
+#   aarch64: Fresh Debian Trixie on Raspberry Pi 5 (no PVE yet).
+#            Run this script once → installs PVE → reboots.
+#            Run it again after reboot → installs PBS + tools.
 #
 # Prerequisites:
-#   - Fresh Proxmox VE installed and network configured
-#   - Run as root on PVE host
+#   - Run as root
 #   - EDIT config.env BEFORE running this script!
-#   - PBS_PARTITION must already exist and be formatted with ext4:
+#     cp config_x86_standard.env config.env   # or config_rpi5.env
+#   - PBS_PARTITION must already exist (create and format before running):
 #       parted /dev/sdX mkpart primary ext4 <start> <end>
 #       mkfs.ext4 -m 0 /dev/sdXN
-#
-# Supports:
-#   - x86_64: standard Proxmox VE install
-#   - aarch64: Proxmox on Debian (e.g. Raspberry Pi 5), uses pipbs community repo
+#   - aarch64: set PVE_HOSTNAME, PVE_IP, PVE_GATEWAY, PVE_IFACE in config.env
 #
 # After this script:
 #   1. Run: rclone config  (see README for detailed instructions)
 #   2. Save restic password to /etc/resticprofile/restic-password
-#   3. Run restore-2-auth.sh
+#   3. Run restore-3-pve.sh
 # =============================================================================
 
 set -euo pipefail
@@ -53,6 +57,106 @@ if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
     exit 1
 fi
 source "${SCRIPT_DIR}/config.env"
+
+# =============================================================================
+# Step 0 (aarch64 only): Install Proxmox VE if not already present
+# =============================================================================
+if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
+    echo "=== Step 0: Install Proxmox VE (arm64 / pxvirt) ==="
+    echo "  pvesh not found — PVE not yet installed."
+    echo ""
+
+    # Validate required config vars
+    for _var in PVE_HOSTNAME PVE_IP PVE_GATEWAY PVE_IFACE; do
+        if [ -z "${!_var:-}" ]; then
+            echo "ERROR: ${_var} is not set in config.env"
+            echo "  Add PVE_HOSTNAME, PVE_IP, PVE_GATEWAY, PVE_DNS, PVE_IFACE to config.env"
+            exit 1
+        fi
+    done
+    PVE_DNS="${PVE_DNS:-8.8.8.8}"
+
+    # Verify interface exists
+    if ! ip link show "${PVE_IFACE}" &>/dev/null; then
+        echo "ERROR: interface '${PVE_IFACE}' not found. Set PVE_IFACE in config.env."
+        echo "Available interfaces:"
+        ip -o link show | awk '{print "  " $2}' | sed 's/://'
+        exit 1
+    fi
+
+    echo "  Hostname:  ${PVE_HOSTNAME}"
+    echo "  IP:        ${PVE_IP}"
+    echo "  Gateway:   ${PVE_GATEWAY}"
+    echo "  Interface: ${PVE_IFACE}"
+    echo ""
+    if [ "${CI:-}" = "true" ]; then
+        echo "  CI mode: skipping confirmation, continuing automatically."
+    else
+        read -p "Press Enter to install Proxmox VE or Ctrl+C to abort..."
+    fi
+
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Set hostname
+    hostnamectl set-hostname "${PVE_HOSTNAME}"
+    sed -i '/^127\.0\.1\.1/d' /etc/hosts
+    echo "127.0.1.1 ${PVE_HOSTNAME}.local ${PVE_HOSTNAME}" >> /etc/hosts
+
+    # Disable cloud-init network management (common on Pi images)
+    if [ -d /etc/cloud ]; then
+        echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    fi
+
+    # Configure vmbr0 bridge
+    apt_get install -y ifupdown2
+    cat > /etc/network/interfaces << EOF
+auto lo
+iface lo inet loopback
+
+iface ${PVE_IFACE} inet manual
+
+auto vmbr0
+iface vmbr0 inet static
+    address ${PVE_IP}
+    gateway ${PVE_GATEWAY}
+    dns-nameservers ${PVE_DNS}
+    bridge-ports ${PVE_IFACE}
+    bridge-stp off
+    bridge-fd 0
+EOF
+
+    # Add pxvirt repo (community PVE ARM64 port)
+    curl -fsSL https://download.lierfang.com/pxcloud/pxvirt/pveport.gpg \
+        | gpg --batch --no-tty --dearmor \
+        > /etc/apt/trusted.gpg.d/pxvirt.gpg
+    echo "deb https://download.lierfang.com/pxcloud/pxvirt trixie main" \
+        > /etc/apt/sources.list.d/pxvirt.list
+    apt_get update
+    apt_get install -y proxmox-ve pve-qemu-kvm
+
+    # Remove enterprise repos (require subscription, cause 401)
+    rm -f /etc/apt/sources.list.d/*enterprise*
+    apt_get update -qq
+
+    # Switch to 4k page-size kernel — required for PBS on Pi5
+    if [ "$(getconf PAGE_SIZE)" != "4096" ]; then
+        if grep -q "^kernel=" /boot/firmware/config.txt 2>/dev/null; then
+            sed -i 's/^kernel=.*/kernel=kernel8.img/' /boot/firmware/config.txt
+        else
+            echo "kernel=kernel8.img" >> /boot/firmware/config.txt
+        fi
+        echo "  4k kernel configured (kernel=kernel8.img)"
+    fi
+
+    PVE_IP_ADDR="${PVE_IP%/*}"
+    echo ""
+    echo "=== Proxmox VE installed. Rebooting in 5 seconds... ==="
+    echo "After reboot, run this script again: ./restore-1-install.sh"
+    echo "Proxmox GUI will be at: https://${PVE_IP_ADDR}:8006"
+    sleep 5
+    reboot
+    exit 0
+fi
 
 echo "=== Configuration loaded ==="
 echo "  Architecture:     ${ARCH}"

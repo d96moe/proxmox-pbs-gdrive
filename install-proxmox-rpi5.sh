@@ -1,206 +1,22 @@
 #!/bin/bash
 # =============================================================================
-# install-proxmox-rpi5.sh — Install Proxmox VE on Raspberry Pi 5 (aarch64)
+# install-proxmox-rpi5.sh
 #
-# Starting point: fresh Debian Trixie (64-bit) installed via Raspberry Pi Imager
-# End state:      Proxmox VE running, accessible at https://<IP>:8006
+# This script is now a thin wrapper. Proxmox VE installation for Raspberry Pi 5
+# is handled directly by restore-1-install.sh (Step 0).
 #
-# After this script reboots, run:
+# Just run restore-1-install.sh:
 #   cp config_rpi5.env config.env
-#   nano config.env          # set PBS_PARTITION and PBS_USER_PASSWORD at minimum
-#   ./restore-1-install.sh   # installs PBS, rclone, restic, resticprofile
+#   nano config.env    # set PVE_HOSTNAME, PVE_IP, PVE_IFACE, PBS_PARTITION, PBS_USER_PASSWORD
+#   ./restore-1-install.sh
 #
-# Why a separate script from restore-1-install.sh:
-#   x86_64: Proxmox ships a bootable ISO — PVE comes pre-installed.
-#   Pi5:    no official PVE image exists. This script does what the ISO does,
-#           using pxvirt (community ARM64 PVE port by lierfang).
-#
-# Tested on: Raspberry Pi 5 8GB, NVMe via USB adapter, Debian Trixie
+# restore-1-install.sh detects that PVE is not yet installed and handles:
+#   - pxvirt repo + proxmox-ve install
+#   - vmbr0 bridge configuration
+#   - 4k kernel switch (required for PBS on Pi5)
+#   - reboot
+# After reboot, run restore-1-install.sh again to install PBS + tools.
 # =============================================================================
 
-# =============================================================================
-# EDIT THESE BEFORE RUNNING
-# =============================================================================
-
-HOSTNAME="proxmox"          # Proxmox hostname (also sets /etc/hosts)
-IP="192.168.1.200/24"       # Static IP with prefix length
-GATEWAY="192.168.1.1"       # Default gateway
-DNS="8.8.8.8"               # Nameserver
-
-# Network interface that has your internet connection.
-# Run 'ip link' or 'ip route show default' to find it.
-# Common values on Pi5: eth0, enp2s0
-IFACE="eth0"
-
-# =============================================================================
-
-set -euo pipefail
-
-echo "=== install-proxmox-rpi5.sh ==="
-echo ""
-
-# Require root
-if [ "$(id -u)" -ne 0 ]; then
-    echo "ERROR: run as root"
-    exit 1
-fi
-
-# Require arm64
-ARCH="$(uname -m)"
-if [ "${ARCH}" != "aarch64" ]; then
-    echo "ERROR: this script is for aarch64 only (detected: ${ARCH})"
-    exit 1
-fi
-
-# Require Debian-based
-if [ ! -f /etc/os-release ]; then
-    echo "ERROR: /etc/os-release not found — Debian-based OS required"
-    exit 1
-fi
-source /etc/os-release
-if [[ "${ID}" != "debian" && "${ID_LIKE:-}" != *"debian"* ]]; then
-    echo "ERROR: Debian-based OS required (detected: ${ID})"
-    exit 1
-fi
-echo "OS: ${PRETTY_NAME:-${ID}} — OK"
-
-# Verify the configured interface exists
-if ! ip link show "${IFACE}" &>/dev/null; then
-    echo ""
-    echo "ERROR: network interface '${IFACE}' not found."
-    echo "Available interfaces:"
-    ip -o link show | awk '{print "  " $2}' | sed 's/://'
-    echo ""
-    echo "Edit IFACE= at the top of this script and re-run."
-    exit 1
-fi
-
-echo ""
-echo "Configuration:"
-echo "  Hostname:  ${HOSTNAME}"
-echo "  IP:        ${IP}"
-echo "  Gateway:   ${GATEWAY}"
-echo "  DNS:       ${DNS}"
-echo "  Interface: ${IFACE}"
-echo ""
-read -p "Press Enter to continue or Ctrl+C to abort..."
-
-# Stop apt timers to prevent lock conflicts during install
-systemctl stop apt-daily.timer apt-daily-upgrade.timer \
-    apt-daily.service apt-daily-upgrade.service \
-    unattended-upgrades 2>/dev/null || true
-pkill -x apt-get 2>/dev/null || true
-sleep 2
-rm -f /var/cache/apt/pkgcache.bin /var/cache/apt/srcpkgcache.bin
-
-# =============================================================================
-echo "=== Step 1: Set hostname ==="
-# =============================================================================
-hostnamectl set-hostname "${HOSTNAME}"
-# Remove any existing 127.0.1.1 entry and replace with our hostname
-sed -i '/^127\.0\.1\.1/d' /etc/hosts
-echo "127.0.1.1 ${HOSTNAME}.local ${HOSTNAME}" >> /etc/hosts
-echo "  Hostname set to: ${HOSTNAME}"
-
-# =============================================================================
-echo "=== Step 2: Install prerequisites ==="
-# =============================================================================
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y ca-certificates curl gnupg ifupdown2
-
-# =============================================================================
-echo "=== Step 3: Configure vmbr0 network bridge ==="
-# =============================================================================
-# Disable cloud-init network management if present (common on Pi images)
-if [ -d /etc/cloud ]; then
-    echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
-    echo "  cloud-init network management disabled"
-fi
-
-IP_ADDR="${IP%/*}"  # strip prefix length for comment
-
-cat > /etc/network/interfaces << EOF
-# Generated by install-proxmox-rpi5.sh
-# Do not manage via cloud-init
-auto lo
-iface lo inet loopback
-
-iface ${IFACE} inet manual
-
-auto vmbr0
-iface vmbr0 inet static
-    address ${IP}
-    gateway ${GATEWAY}
-    dns-nameservers ${DNS}
-    bridge-ports ${IFACE}
-    bridge-stp off
-    bridge-fd 0
-EOF
-echo "  /etc/network/interfaces written (vmbr0 bridge on ${IFACE})"
-echo "  Static IP: ${IP_ADDR} (takes effect after reboot)"
-
-# =============================================================================
-echo "=== Step 4: Add pxvirt repository (community PVE ARM64 port) ==="
-# =============================================================================
-mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.lierfang.com/pxcloud/pxvirt/pveport.gpg \
-    | gpg --batch --no-tty --dearmor \
-    > /etc/apt/trusted.gpg.d/pxvirt.gpg
-echo "deb https://download.lierfang.com/pxcloud/pxvirt trixie main" \
-    > /etc/apt/sources.list.d/pxvirt.list
-echo "  pxvirt repo added"
-
-# =============================================================================
-echo "=== Step 5: Install Proxmox VE ==="
-# =============================================================================
-apt-get update
-apt-get install -y proxmox-ve pve-qemu-kvm
-
-# =============================================================================
-echo "=== Step 6: Remove enterprise repos (require subscription, cause 401) ==="
-# =============================================================================
-rm -f /etc/apt/sources.list.d/*enterprise*
-apt-get update -qq
-echo "  Enterprise repos removed"
-
-# =============================================================================
-echo "=== Step 7: Check kernel page-size (PBS requires 4k) ==="
-# =============================================================================
-PAGE_SIZE="$(getconf PAGE_SIZE)"
-echo "  Current page size: ${PAGE_SIZE}"
-
-if [ "${PAGE_SIZE}" != "4096" ]; then
-    echo ""
-    echo "  WARNING: Pi5 default kernel uses ${PAGE_SIZE}-byte pages."
-    echo "  PBS requires a 4k page-size kernel."
-    echo "  Adding kernel=kernel8.img to /boot/firmware/config.txt..."
-    if grep -q "^kernel=" /boot/firmware/config.txt 2>/dev/null; then
-        sed -i 's/^kernel=.*/kernel=kernel8.img/' /boot/firmware/config.txt
-    else
-        echo "kernel=kernel8.img" >> /boot/firmware/config.txt
-    fi
-    echo "  4k kernel configured — will activate after reboot"
-else
-    echo "  Page size 4096: OK — no kernel change needed"
-fi
-
-# =============================================================================
-echo ""
-echo "=== install-proxmox-rpi5.sh COMPLETE ==="
-echo ""
-echo "Proxmox VE is installed. Rebooting in 5 seconds..."
-echo ""
-echo "After reboot:"
-echo "  - Proxmox GUI:  https://${IP_ADDR}:8006"
-echo "  - SSH:          ssh root@${IP_ADDR}"
-echo ""
-echo "Then run the next step:"
-echo "  cd proxmox-backup-restore"
-echo "  cp config_rpi5.env config.env"
-echo "  nano config.env    # set PBS_PARTITION and PBS_USER_PASSWORD"
-echo "  ./restore-1-install.sh"
-# =============================================================================
-
-sleep 5
-reboot
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "${SCRIPT_DIR}/restore-1-install.sh" "$@"

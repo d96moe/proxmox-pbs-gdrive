@@ -20,7 +20,8 @@ VM_IP="192.168.0.252"
 GATEWAY="192.168.0.1"
 STORAGE="local-lvm"
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10"
-SSH_KEY="/var/lib/jenkins/.ssh/id_ed25519"
+# Setup runs on the PVE host itself — use PVE root's own key
+SSH_KEY="/root/.ssh/id_rsa"
 
 # Trixie arm64 cloud image — matches Pi 5 base OS
 IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-genericcloud-arm64-daily.qcow2"
@@ -31,6 +32,10 @@ JENKINS_PUBKEY=$(qm config 9001 | grep sshkeys \
     | sed 's/sshkeys: //' \
     | python3 -c "import sys,urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))")
 [ -z "$JENKINS_PUBKEY" ] && { echo "ERROR: cannot extract Jenkins pubkey from template 9001"; exit 1; }
+
+# PVE host root pubkey — needed so setup SSH commands work from this host
+PVE_ROOT_PUBKEY=$(cat "${SSH_KEY}.pub" 2>/dev/null)
+[ -z "$PVE_ROOT_PUBKEY" ] && { echo "ERROR: no public key at ${SSH_KEY}.pub — run ssh-keygen -t rsa first"; exit 1; }
 
 # =============================================================================
 echo "=== Step 1: Install arm64 UEFI firmware ==="
@@ -86,7 +91,7 @@ qm importdisk $TEMPLATE_ID "$IMAGE_PATH" $STORAGE
 echo "=== Step 6: Attach disks ==="
 # =============================================================================
 qm set $TEMPLATE_ID \
-    --scsi0 ${STORAGE}:vm-${TEMPLATE_ID}-disk-0,discard=on,size=16G \
+    --scsi0 ${STORAGE}:vm-${TEMPLATE_ID}-disk-0,discard=on,size=32G \
     --boot order=scsi0
 
 # PBS data disk (/dev/sdb inside the VM)
@@ -99,7 +104,8 @@ qm set $TEMPLATE_ID --scsi2 ${STORAGE}:cloudinit,media=cdrom
 echo "=== Step 7: Configure cloud-init ==="
 # =============================================================================
 TMPKEY=$(mktemp)
-echo "$JENKINS_PUBKEY" > "$TMPKEY"
+# Include both PVE root key (for setup) and Jenkins key (for CI jobs)
+printf '%s\n%s\n' "$PVE_ROOT_PUBKEY" "$JENKINS_PUBKEY" > "$TMPKEY"
 qm set $TEMPLATE_ID \
     --ciuser root \
     --ipconfig0 ip=${VM_IP}/24,gw=${GATEWAY} \
@@ -132,6 +138,14 @@ echo "Installing pxvirt (community PVE ARM64) + pipbs (community PBS ARM64)..."
 ssh $SSH_OPTS -i "$SSH_KEY" root@${VM_IP} bash -s << ENDSSH
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+
+echo "--- Waiting for cloud-init to finish ---"
+cloud-init status --wait 2>/dev/null || true
+# Also wait for any apt locks released by cloud-init
+while fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    echo "  waiting for apt lock..."
+    sleep 5
+done
 
 echo "--- Updating base system ---"
 apt-get update -qq
@@ -216,7 +230,15 @@ proxmox-backup-manager version
 ENDSSH
 
 # =============================================================================
-echo "=== Step 10: Stop VM and convert to template ==="
+echo "=== Step 10: Remove PVE setup key, keep only Jenkins key for CI ==="
+# =============================================================================
+# The PVE root key was only needed during setup — overwrite authorized_keys
+# with just the Jenkins pubkey so CI VMs only accept the Jenkins identity
+echo "$JENKINS_PUBKEY" | ssh $SSH_OPTS -i "$SSH_KEY" root@${VM_IP} \
+    "cat > /root/.ssh/authorized_keys; echo 'authorized_keys:'; cat /root/.ssh/authorized_keys"
+
+# =============================================================================
+echo "=== Step 11: Stop VM and convert to template ==="
 # =============================================================================
 qm stop $TEMPLATE_ID
 sleep 5
