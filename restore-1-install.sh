@@ -171,6 +171,12 @@ EOF
     systemctl disable systemd-networkd systemd-networkd-wait-online 2>/dev/null || true
     systemctl mask systemd-networkd 2>/dev/null || true
 
+    # Write resolv.conf directly — /etc/resolv.conf may be a symlink to
+    # systemd-resolved's stub which breaks after masking systemd-networkd.
+    rm -f /etc/resolv.conf
+    echo "nameserver ${PVE_DNS}" > /etc/resolv.conf
+    echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+
     PVE_IP_ADDR="${PVE_IP%/*}"
     echo ""
     echo "=== Proxmox VE installed. Rebooting in 5 seconds... ==="
