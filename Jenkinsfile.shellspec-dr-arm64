@@ -224,6 +224,8 @@ print(ct[-1]['volid'])
 echo "Restoring from: \${SNAP}"
 rm -f /etc/pve/lxc/100.conf
 pct restore 100 "\${SNAP}" --storage local
+# Remove network config — vmbr0 has no uplink in CI, causes LXC spawn failure
+sed -i '/^net/d' /etc/pve/lxc/100.conf
 pct start 100
 sleep 5
 ENDSSH
