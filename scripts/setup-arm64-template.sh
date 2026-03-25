@@ -102,6 +102,7 @@ TMPKEY=$(mktemp)
 echo "$JENKINS_PUBKEY" > "$TMPKEY"
 qm set $TEMPLATE_ID \
     --ciuser root \
+    --cipassword "ci-arm64-root" \
     --ipconfig0 ip=${VM_IP}/24,gw=${GATEWAY} \
     --nameserver 8.8.8.8 \
     --sshkeys "$TMPKEY"

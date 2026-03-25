@@ -102,6 +102,20 @@ if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
     sed -i '/^127\.0\.1\.1/d' /etc/hosts
     echo "127.0.1.1 ${PVE_HOSTNAME}.local ${PVE_HOSTNAME}" >> /etc/hosts
 
+    # Set root password (required for headless DR access via SSH or console)
+    if [ -n "${ROOT_PASSWORD:-}" ]; then
+        echo "root:${ROOT_PASSWORD}" | chpasswd
+        echo "  Root password set."
+    else
+        echo "  WARNING: ROOT_PASSWORD not set in config.env — root login via password disabled."
+    fi
+
+    # Enable SSH password authentication
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    grep -q "^PasswordAuthentication" /etc/ssh/sshd_config || echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+    grep -q "^PermitRootLogin" /etc/ssh/sshd_config || echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+
     # Disable cloud-init network management (common on Pi images)
     if [ -d /etc/cloud ]; then
         echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
