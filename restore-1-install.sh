@@ -111,7 +111,7 @@ if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
     apt_get update
 
     # Configure vmbr0 bridge
-    apt_get install -y ifupdown2
+    apt_get install -y ifupdown2 gpg curl
     cat > /etc/network/interfaces << EOF
 auto lo
 iface lo inet loopback
