@@ -1,13 +1,16 @@
 // =============================================================================
 // Jenkinsfile.shellspec-dr-arm64  —  Scenario B: DR Restore (arm64 / Pi 5)
 //
-// Identical logic to Jenkinsfile.shellspec-dr but runs on an aarch64 VM
-// (template 9002). Verifies full disaster recovery on arm64.
-//
-// NOTE: arm64 is fully emulated (no KVM), expect 3-5x longer build times.
+// Template 9002 is vanilla Debian Trixie arm64 (no PVE, no PBS).
+// Full DR scenario tested end-to-end:
+//   Step 0: installs pxvirt (PVE), configures bridge, reboots
+//   Step 1+: installs PBS (pipbs), rclone, restic, resticprofile
+//   Then: restores PBS datastore from GDrive, restores LXC from PBS
 //
 // Prerequisite: proxmox-ci-backup-arm64 must have run at least once to
 // populate bu/ci-restore-test-arm64 in Google Drive.
+//
+// NOTE: arm64 is fully emulated (no KVM), expect 3-5x longer build times.
 // =============================================================================
 
 pipeline {
@@ -26,7 +29,6 @@ pipeline {
         VM_ID         = "9${String.format('%02d', (env.BUILD_NUMBER.toInteger() % 100) + 50)}"
         VM_IP         = "192.168.0.252"
         PVE_HOST      = "192.168.0.200"
-        SSH_KEY       = "/var/lib/jenkins/.ssh/id_ed25519"
         SSH_OPTS      = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -i /var/lib/jenkins/.ssh/id_ed25519"
         SCRIPTS_DIR   = "/opt/proxmox-restore"
         GDRIVE_REPO   = "rclone:gdrive:bu/ci-restore-test-arm64"
@@ -48,7 +50,7 @@ pipeline {
         stage('Start VM + wait for SSH') {
             steps {
                 sh "ssh ${SSH_OPTS} root@${PVE_HOST} 'qm start ${VM_ID}'"
-                echo "Waiting for SSH at ${VM_IP} (arm64 emulation — max 300s)..."
+                echo "Waiting for SSH at ${VM_IP} (vanilla Debian — max 300s)..."
                 sh """
                     for i in \$(seq 1 60); do
                         ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH ready" && exit 0
@@ -58,16 +60,6 @@ pipeline {
                     echo "ERROR: VM did not become reachable within 300 seconds"
                     exit 1
                 """
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-HOSTNAME=\$(hostname)
-grep -qF "\${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
-systemctl reset-failed pve-cluster 2>/dev/null || true
-systemctl restart pve-cluster
-sleep 5
-systemctl is-active pve-cluster && echo "pve-cluster: OK" || { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
-ENDSSH
-                """
             }
         }
 
@@ -76,10 +68,6 @@ ENDSSH
                 echo "Formatting PBS data disk with ext4..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-systemctl stop proxmox-backup proxmox-backup-proxy proxmox-backup-watchdog 2>/dev/null || true
-fuser -km /mnt/pbs 2>/dev/null || true
-systemctl stop mnt-pbs.mount 2>/dev/null || true
-umount -fl /mnt/pbs 2>/dev/null || true
 udevadm settle
 ROOT_DISK=\$(lsblk -ndo PKNAME \$(findmnt -n -o SOURCE /) 2>/dev/null | head -1)
 DATA_DISK=\$(lsblk -nd -o NAME | grep -v "^\${ROOT_DISK}\$" | head -1)
@@ -123,14 +111,53 @@ ENDSSH
             }
         }
 
-        stage('Install tools') {
+        stage('Install PVE (restore-1-install.sh Step 0)') {
             steps {
-                echo "Installing PBS, rclone, restic, resticprofile on arm64 CI VM..."
+                echo "Running restore-1-install.sh — Step 0 installs pxvirt and reboots..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH' || true
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+cp config_ci_arm64.env config.env
+CI=true bash restore-1-install.sh
+ENDSSH
+                """
+                echo "VM is rebooting after pxvirt install. Waiting for SSH (max 600s)..."
+                sh """
+                    sleep 30
+                    for i in \$(seq 1 114); do
+                        ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH ready after reboot" && exit 0
+                        echo "  attempt \$i/114..."
+                        sleep 5
+                    done
+                    echo "ERROR: VM did not come back within 600 seconds"
+                    exit 1
+                """
+            }
+        }
+
+        stage('Fix pve-cluster after reboot') {
+            steps {
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+HOSTNAME=\$(hostname)
+grep -qF "192.168.0.252 \${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
+systemctl reset-failed pve-cluster 2>/dev/null || true
+systemctl restart pve-cluster
+sleep 5
+systemctl is-active pve-cluster && echo "pve-cluster: OK" || { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
+ENDSSH
+                """
+            }
+        }
+
+        stage('Install tools (restore-1-install.sh Step 1+)') {
+            steps {
+                echo "Installing PBS (pipbs), rclone, restic, resticprofile..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
 cd ${SCRIPTS_DIR}
-cp config_ci_arm64.env config.env
 CI=true bash restore-1-install.sh
 ENDSSH
                 """
