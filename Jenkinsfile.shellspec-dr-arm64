@@ -225,7 +225,7 @@ echo "Restoring from: \${SNAP}"
 rm -f /etc/pve/lxc/100.conf
 pct restore 100 "\${SNAP}" --storage local
 # Disable seccomp/apparmor — QEMU arm64 emulation blocks some syscalls
-sed -i '/^net/d; /^lxc\.seccomp/d; /^lxc\.apparmor/d' /etc/pve/lxc/100.conf
+sed -i '/^net/d; /^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
 echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
 pct start 100
 sleep 5
