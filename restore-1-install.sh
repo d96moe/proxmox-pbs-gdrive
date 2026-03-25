@@ -26,10 +26,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARCH="$(uname -m)"
 
-# Stop background apt timers to prevent lock conflicts
+# Stop background apt timers and kill any running apt to prevent lock conflicts
 systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
+pkill -x apt-get 2>/dev/null || true
+sleep 2
+# Wait for apt lists lock to be free (up to 60s)
+for i in $(seq 1 12); do
+    flock -n /var/lib/apt/lists/lock true 2>/dev/null && break
+    echo "  Waiting for apt lists lock ($i/12)..."
+    sleep 5
+done
 
-# Helper: run apt-get with automatic lock wait (up to 5 minutes)
+# Helper: run apt-get with dpkg lock wait (up to 5 minutes)
 apt_get() { apt-get -o DPkg::Lock::Timeout=300 "$@"; }
 
 # Load configuration
