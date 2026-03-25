@@ -181,10 +181,10 @@ fi
 
 pct create 100 "\${TMPL_DIR}/\${TMPL_NAME}" \
     --arch arm64 \
+    --ostype unmanaged \
     --hostname ci-test-lxc \
     --memory 64 \
     --rootfs local:1 \
-    --net0 name=eth0,bridge=vmbr0,ip=10.10.0.50/24,gw=10.10.0.1 \
     --unprivileged 1
 
 # Disable seccomp/apparmor — QEMU arm64 emulation blocks some syscalls
