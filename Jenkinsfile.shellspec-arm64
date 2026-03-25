@@ -61,7 +61,8 @@ pipeline {
                 """
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-grep -E '^192\\.168\\.0\\.252.*restore-ci-arm64' /etc/hosts || echo '192.168.0.252 restore-ci-arm64.local restore-ci-arm64' >> /etc/hosts
+HOSTNAME=\$(hostname)
+grep -qF "\${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
 systemctl reset-failed pve-cluster 2>/dev/null || true
 systemctl restart pve-cluster
 sleep 5
