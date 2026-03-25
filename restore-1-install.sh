@@ -144,7 +144,7 @@ if [ "${ARCH}" = "aarch64" ]; then
     apt-get install -y ca-certificates curl gnupg
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
-        | gpg --dearmor -o /etc/apt/keyrings/pipbs.gpg
+        | gpg --batch --no-tty --dearmor -o /etc/apt/keyrings/pipbs.gpg
     echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ trixie main" \
         > /etc/apt/sources.list.d/pipbs.list
 else
