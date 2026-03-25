@@ -144,6 +144,7 @@ ENDSSH
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
+apt-get install -y -q git
 curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
 shellspec --version
 ENDSSH
