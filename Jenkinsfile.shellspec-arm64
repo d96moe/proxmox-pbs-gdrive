@@ -77,10 +77,11 @@ ENDSSH
                 echo "Formatting /dev/sdb (PBS partition) with ext4..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+systemctl stop proxmox-backup proxmox-backup-proxy proxmox-backup-watchdog 2>/dev/null || true
+fuser -km /mnt/pbs 2>/dev/null || true
 systemctl stop mnt-pbs.mount 2>/dev/null || true
-umount -f /mnt/pbs 2>/dev/null || true
-umount -f /dev/sdb 2>/dev/null || true
-sleep 1
+umount -fl /mnt/pbs 2>/dev/null || true
+sleep 2
 mkfs.ext4 -F -F -m 0 /dev/sdb
 ENDSSH
                 """
