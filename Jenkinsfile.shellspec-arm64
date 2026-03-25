@@ -241,6 +241,11 @@ set -euo pipefail
 resticprofile \
     -c /etc/resticprofile/profiles.yaml \
     -n pbs-backup \
+    init 2>/dev/null || true
+
+resticprofile \
+    -c /etc/resticprofile/profiles.yaml \
+    -n pbs-backup \
     backup
 
 systemctl start proxmox-backup proxmox-backup-proxy
