@@ -159,7 +159,7 @@ fi
 echo "=== Step 1: Install Proxmox Backup Server ==="
 if [ "${ARCH}" = "aarch64" ]; then
     echo "  ARM64 detected — using community pipbs repository..."
-    apt_get install -y ca-certificates curl gnupg
+    apt_get install -y ca-certificates curl gnupg unzip
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
         | gpg --batch --no-tty --dearmor \
@@ -182,7 +182,7 @@ echo "=== Step 2: Install rclone ==="
 curl https://rclone.org/install.sh | bash
 
 echo "=== Step 3: Install restic ==="
-apt_get install -y restic unzip
+apt_get install -y restic
 
 echo "=== Step 4: Install resticprofile ==="
 curl -sfL https://raw.githubusercontent.com/creativeprojects/resticprofile/master/install.sh | sh
