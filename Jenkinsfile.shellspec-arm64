@@ -161,26 +161,38 @@ ENDSSH
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
 
-pveam update
+# Ensure vmbr0 bridge exists (pxvirt doesn't auto-create it)
+if ! ip link show vmbr0 &>/dev/null; then
+    ip link add name vmbr0 type bridge 2>/dev/null || true
+    ip link set vmbr0 up
+fi
 
-DEBIAN12_TMPL=\$(pveam available --section system 2>/dev/null \
-    | awk '/debian-12-standard/ {print \$2}' | sort -V | tail -1)
-[ -z "\${DEBIAN12_TMPL}" ] && DEBIAN12_TMPL="debian-12-standard_12.12-1_amd64.tar.zst"
+# Download native arm64 Debian template from linuxcontainers.org
+# pveam available on pxvirt only lists amd64 — must fetch arm64 template manually
+TMPL_DIR="/var/lib/vz/template/cache"
+TMPL_NAME="debian-12-standard_arm64.tar.xz"
+if [ ! -f "\${TMPL_DIR}/\${TMPL_NAME}" ]; then
+    BASE="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
+    LATEST=\$(curl -sL "\${BASE}/" | grep -oE '[0-9]{8}_[0-9]{2}:[0-9]{2}' | sort -r | head -1)
+    [ -z "\${LATEST}" ] && { echo "ERROR: could not list arm64 templates from linuxcontainers.org"; exit 1; }
+    echo "Downloading arm64 template build \${LATEST}..."
+    curl -fsSL "\${BASE}/\${LATEST}/rootfs.tar.xz" -o "\${TMPL_DIR}/\${TMPL_NAME}"
+fi
 
-pveam download local "\${DEBIAN12_TMPL}"
-
-LOCAL_TMPL=\$(pveam list local 2>/dev/null \
-    | awk '/debian-12-standard/ {print \$1}' | sort -V | tail -1)
-[ -z "\${LOCAL_TMPL}" ] && { echo "ERROR: no debian-12 template in local"; exit 1; }
-
-pct create 100 "\${LOCAL_TMPL}" \
+pct create 100 "\${TMPL_DIR}/\${TMPL_NAME}" \
+    --arch arm64 \
     --hostname ci-test-lxc \
     --memory 64 \
     --rootfs local:1 \
     --net0 name=eth0,bridge=vmbr0,ip=10.10.0.50/24,gw=10.10.0.1 \
-    --unprivileged 1 \
-    --start 1
+    --unprivileged 1
 
+# Disable seccomp/apparmor — QEMU arm64 emulation blocks some syscalls
+sed -i '/^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
+echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
+
+pct start 100
+sleep 5
 echo "Test LXC 100 created and started"
 pct status 100
 ENDSSH
