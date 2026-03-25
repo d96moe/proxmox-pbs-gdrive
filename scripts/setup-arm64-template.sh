@@ -157,17 +157,12 @@ curl -fsSL https://download.lierfang.com/pxcloud/pxvirt/pveport.gpg \\
 echo "deb https://download.lierfang.com/pxcloud/pxvirt trixie main" \\
     > /etc/apt/sources.list.d/pxvirt.list
 
-echo "--- Adding pipbs repo (community PBS ARM64) ---"
-mkdir -p /etc/apt/keyrings
-curl -fsSL https://dexogen.github.io/pipbs/gpg.key \\
-    | gpg --dearmor > /etc/apt/keyrings/pipbs.gpg
-echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ trixie main" \\
-    > /etc/apt/sources.list.d/pipbs.list
-
 apt-get update -qq
 
 echo "--- Installing proxmox-ve (pxvirt) ---"
-apt-get install -y proxmox-ve proxmox-backup-server pve-qemu-kvm
+# Do NOT install proxmox-backup-server here — restore-1-install.sh installs
+# it (via pipbs) during CI so the installation step is actually tested.
+apt-get install -y proxmox-ve pve-qemu-kvm
 
 echo "--- Removing enterprise repos (require subscription) ---"
 rm -f /etc/apt/sources.list.d/*enterprise*
