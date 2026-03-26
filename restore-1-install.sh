@@ -39,6 +39,140 @@ sleep 2
 # Remove potentially corrupted binary cache files (left by killed apt-daily)
 rm -f /var/cache/apt/pkgcache.bin /var/cache/apt/srcpkgcache.bin
 
+# ---------------------------------------------------------------------------
+# _arm64_check_compat — deep pxvirt/pipbs compatibility check
+#
+# Inspects package metadata to verify that the proxmox-backup-client
+# provided by pipbs satisfies the version constraint declared by
+# libpve-storage-perl (the module that defines PVE's backup API).
+# Falls back to major.minor comparison if metadata is unavailable.
+#
+# Both repos must be added and apt updated before calling this.
+#
+# Sets (exported):
+#   PVE_INSTALL_VERSION  — if pxvirt must be pinned to an older version
+#   PIPBS_PINNED_VERSION — if pipbs must be pinned to an older version
+# ---------------------------------------------------------------------------
+_arm64_check_compat() {
+    local pve_cand pbs_cand pbc_cand pbc_min
+
+    pve_cand="$(apt-cache policy proxmox-ve 2>/dev/null | awk '/Candidate:/{print $2}')"
+    pbs_cand="$(apt-cache policy proxmox-backup-server 2>/dev/null | awk '/Candidate:/{print $2}')"
+    pbc_cand="$(apt-cache policy proxmox-backup-client 2>/dev/null | awk '/Candidate:/{print $2}')"
+
+    [ -z "${pve_cand}" ] && { echo "  WARNING: proxmox-ve not found in pxvirt repo"; return; }
+    [ -z "${pbs_cand}" ] && { echo "  WARNING: proxmox-backup-server not found in pipbs repo"; return; }
+
+    echo "  pxvirt  proxmox-ve:            ${pve_cand}"
+    echo "  pipbs   proxmox-backup-server: ${pbs_cand}"
+    echo "  pipbs   proxmox-backup-client: ${pbc_cand:-not found}"
+
+    # Find the minimum proxmox-backup-client version required by this PVE build.
+    # PVE declares this via libpve-storage-perl (the backup API module).
+    pbc_min="$(apt-cache show proxmox-ve 2>/dev/null \
+        | grep "^Depends:" | tr ',' '\n' \
+        | grep 'proxmox-backup-client' \
+        | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1)"
+    if [ -z "${pbc_min}" ]; then
+        pbc_min="$(apt-cache show libpve-storage-perl 2>/dev/null \
+            | grep "^Depends:" | tr ',' '\n' \
+            | grep 'proxmox-backup-client' \
+            | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1)"
+    fi
+
+    if [ -n "${pbc_min}" ] && [ -n "${pbc_cand}" ]; then
+        echo "  API requirement: proxmox-backup-client >= ${pbc_min}"
+        if dpkg --compare-versions "${pbc_cand}" ge "${pbc_min}"; then
+            echo "  API check OK: ${pbc_cand} satisfies >= ${pbc_min}"
+            return
+        fi
+        echo ""
+        echo "WARNING: API incompatibility detected!"
+        echo "  proxmox-ve ${pve_cand} requires proxmox-backup-client >= ${pbc_min}"
+        echo "  pipbs provides proxmox-backup-client ${pbc_cand} — does not satisfy"
+    else
+        # No metadata available — fall back to major.minor string comparison
+        local pve_mm pbs_mm
+        pve_mm="$(echo "${pve_cand}" | sed 's/^[0-9]*://' | cut -d. -f1,2)"
+        pbs_mm="$(echo "${pbs_cand}" | sed 's/^[0-9]*://' | cut -d. -f1,2)"
+        echo "  No backup-client API metadata found — falling back to major.minor"
+        echo "  pxvirt major.minor: ${pve_mm}   pipbs major.minor: ${pbs_mm}"
+        if [ "${pve_mm}" = "${pbs_mm}" ]; then
+            echo "  Version check OK (major.minor match)"
+            return
+        fi
+        echo ""
+        echo "WARNING: major.minor mismatch: proxmox-ve ${pve_mm} vs proxmox-backup-server ${pbs_mm}"
+    fi
+
+    # Incompatible — try pinning pxvirt to an older version that pipbs can satisfy
+    echo "  Searching for a compatible pxvirt version..."
+    local candidate_pve req
+    while IFS= read -r candidate_pve; do
+        [ "${candidate_pve}" = "${pve_cand}" ] && continue
+        if [ -n "${pbc_min}" ]; then
+            req="$(apt-cache show "proxmox-ve=${candidate_pve}" 2>/dev/null \
+                | grep "^Depends:" | tr ',' '\n' \
+                | grep 'proxmox-backup-client' \
+                | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1)"
+            # If this older PVE has no direct dep, check libpve-storage-perl of same version
+            [ -z "${req}" ] && req="$(apt-cache show "libpve-storage-perl" 2>/dev/null \
+                | grep "^Depends:" | tr ',' '\n' \
+                | grep 'proxmox-backup-client' \
+                | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1)"
+            if [ -n "${req}" ] && [ -n "${pbc_cand}" ] \
+                && dpkg --compare-versions "${pbc_cand}" ge "${req}"; then
+                echo "  Found compatible pxvirt: ${candidate_pve} (needs backup-client >= ${req}, pipbs has ${pbc_cand})"
+                PVE_INSTALL_VERSION="${candidate_pve}"
+                return
+            fi
+        else
+            # major.minor fallback
+            local mm pbs_mm2
+            mm="$(echo "${candidate_pve}" | sed 's/^[0-9]*://' | cut -d. -f1,2)"
+            pbs_mm2="$(echo "${pbs_cand}" | sed 's/^[0-9]*://' | cut -d. -f1,2)"
+            if [ "${mm}" = "${pbs_mm2}" ]; then
+                echo "  Found compatible pxvirt: ${candidate_pve} (major.minor match)"
+                PVE_INSTALL_VERSION="${candidate_pve}"
+                return
+            fi
+        fi
+    done < <(apt-cache madison proxmox-ve 2>/dev/null \
+        | awk -F'|' '{gsub(/ /,"",$2); print $2}' | sort -rV)
+
+    # PVE pinning failed — try finding an older pipbs version instead
+    # proxmox-backup-client and proxmox-backup-server share the same version number
+    echo "  No compatible pxvirt version found. Searching for compatible pipbs version..."
+    local candidate_pbs
+    while IFS= read -r candidate_pbs; do
+        [ "${candidate_pbs}" = "${pbs_cand}" ] && continue
+        if [ -n "${pbc_min}" ]; then
+            if dpkg --compare-versions "${candidate_pbs}" ge "${pbc_min}"; then
+                echo "  Found compatible pipbs: ${candidate_pbs} (backup-client >= ${pbc_min})"
+                export PIPBS_PINNED_VERSION="${candidate_pbs}"
+                return
+            fi
+        else
+            local pbs_mm_c pve_mm2
+            pbs_mm_c="$(echo "${candidate_pbs}" | sed 's/^[0-9]*://' | cut -d. -f1,2)"
+            pve_mm2="$(echo "${pve_cand}" | sed 's/^[0-9]*://' | cut -d. -f1,2)"
+            if [ "${pbs_mm_c}" = "${pve_mm2}" ]; then
+                echo "  Found compatible pipbs: ${candidate_pbs} (major.minor match)"
+                export PIPBS_PINNED_VERSION="${candidate_pbs}"
+                return
+            fi
+        fi
+    done < <(apt-cache madison proxmox-backup-server 2>/dev/null \
+        | awk -F'|' '{gsub(/ /,"",$2); print $2}' | sort -rV)
+
+    echo ""
+    echo "WARNING: Could not find a compatible version pair automatically."
+    echo "  Proceeding with latest of both — check compatibility manually:"
+    echo "    pxvirt: https://download.lierfang.com/pxcloud/pxvirt"
+    echo "    pipbs:  https://github.com/dexogen/pipbs"
+    echo ""
+}
+
 # Helper: kill any background apt and wait for lists lock before running apt-get
 apt_get() {
     pkill -x apt-get 2>/dev/null || true
@@ -159,49 +293,10 @@ EOF
         > /etc/apt/sources.list.d/pipbs.list
     apt_get update
 
-    # Check pxvirt vs pipbs version compatibility BEFORE installing either
-    PVE_CANDIDATE="$(apt-cache policy proxmox-ve 2>/dev/null | awk '/Candidate:/{print $2}')"
-    PBS_CANDIDATE_PRE="$(apt-cache policy proxmox-backup-server 2>/dev/null | awk '/Candidate:/{print $2}')"
-    PVE_CANDIDATE_MM="$(echo "${PVE_CANDIDATE}" | cut -d. -f1,2)"
-    PBS_CANDIDATE_MM="$(echo "${PBS_CANDIDATE_PRE}" | cut -d. -f1,2)"
-    echo "  pxvirt candidate  (proxmox-ve):            ${PVE_CANDIDATE} (major.minor: ${PVE_CANDIDATE_MM})"
-    echo "  pipbs candidate   (proxmox-backup-server): ${PBS_CANDIDATE_PRE} (major.minor: ${PBS_CANDIDATE_MM})"
-
+    # Check pxvirt vs pipbs API compatibility BEFORE installing either
+    echo "  Checking pxvirt/pipbs compatibility via package metadata..."
     PVE_INSTALL_VERSION=""
-    if [ -n "${PVE_CANDIDATE_MM}" ] && [ -n "${PBS_CANDIDATE_MM}" ] && [ "${PVE_CANDIDATE_MM}" != "${PBS_CANDIDATE_MM}" ]; then
-        echo ""
-        echo "WARNING: pxvirt and pipbs are at different major.minor versions!"
-        echo "  proxmox-ve in pxvirt repo:              ${PVE_CANDIDATE_MM}.x"
-        echo "  proxmox-backup-server in pipbs repo:    ${PBS_CANDIDATE_MM}.x"
-        # Prefer to align pxvirt to pipbs (pipbs repo may lag behind pxvirt)
-        MATCHING_PVE="$(apt-cache madison proxmox-ve 2>/dev/null \
-            | awk -F'|' '{gsub(/ /,"",$2); print $2}' \
-            | grep "^${PBS_CANDIDATE_MM}\." | head -1)"
-        if [ -n "${MATCHING_PVE}" ]; then
-            echo "  Found matching pxvirt version: ${MATCHING_PVE}"
-            echo "  Pinning proxmox-ve=${MATCHING_PVE} to match pipbs ${PBS_CANDIDATE_MM}.x"
-            PVE_INSTALL_VERSION="${MATCHING_PVE}"
-        else
-            echo "  No matching pxvirt version for pipbs ${PBS_CANDIDATE_MM}.x found."
-            echo "  Checking if older pipbs version matches pxvirt ${PVE_CANDIDATE_MM}.x..."
-            MATCHING_PBS_PRE="$(apt-cache madison proxmox-backup-server 2>/dev/null \
-                | awk -F'|' '{gsub(/ /,"",$2); print $2}' \
-                | grep "^${PVE_CANDIDATE_MM}\." | head -1)"
-            if [ -n "${MATCHING_PBS_PRE}" ]; then
-                echo "  Found matching pipbs version: ${MATCHING_PBS_PRE}"
-                echo "  pxvirt will install at latest (${PVE_CANDIDATE}); pipbs will be pinned later."
-                # Store for use in Step 1 — export so subshells/later sections see it
-                export PIPBS_PINNED_VERSION="${MATCHING_PBS_PRE}"
-            else
-                echo "  No compatible version pair found. Installing latest of both and WARNING:"
-                echo "    pxvirt: https://download.lierfang.com/pxcloud/pxvirt"
-                echo "    pipbs:  https://github.com/dexogen/pipbs"
-            fi
-        fi
-        echo ""
-    else
-        echo "  Version check OK: pxvirt and pipbs candidates are at matching versions."
-    fi
+    _arm64_check_compat
 
     # Remove pipbs repo — Step 1 will re-add it properly after reboot
     rm -f /etc/apt/sources.list.d/pipbs.list
@@ -393,38 +488,14 @@ else
 fi
 apt_get update
 
-# ARM64 only: check version compatibility BEFORE installing pipbs.
-# If Step 0 already detected a mismatch and set PIPBS_PINNED_VERSION, use it.
-# Otherwise (second run after reboot) do the version check fresh here.
+# ARM64 only: check compatibility BEFORE installing pipbs.
+# If Step 0 already ran _arm64_check_compat and set PIPBS_PINNED_VERSION, use it.
+# Otherwise (second run after reboot, env var lost) run the check fresh here.
 PBS_INSTALL_VERSION="${PIPBS_PINNED_VERSION:-}"
 if [ "${ARCH}" = "aarch64" ] && [ -z "${PBS_INSTALL_VERSION}" ]; then
-    PVE_VER="$(dpkg-query -W -f='${Version}' proxmox-ve 2>/dev/null | cut -d. -f1,2)"
-    PBS_CANDIDATE="$(apt-cache policy proxmox-backup-server 2>/dev/null | awk '/Candidate:/{print $2}')"
-    PBS_CANDIDATE_MM="$(echo "${PBS_CANDIDATE}" | cut -d. -f1,2)"
-    echo "  pxvirt installed  (proxmox-ve):            ${PVE_VER}"
-    echo "  pipbs candidate   (proxmox-backup-server): ${PBS_CANDIDATE} (major.minor: ${PBS_CANDIDATE_MM})"
-    if [ -n "${PVE_VER}" ] && [ -n "${PBS_CANDIDATE_MM}" ] && [ "${PVE_VER}" != "${PBS_CANDIDATE_MM}" ]; then
-        echo ""
-        echo "WARNING: pxvirt and pipbs are at different major.minor versions!"
-        echo "  proxmox-ve installed:           ${PVE_VER}.x  (from pxvirt)"
-        echo "  proxmox-backup-server in repo:  ${PBS_CANDIDATE_MM}.x  (from pipbs)"
-        MATCHING_PBS="$(apt-cache madison proxmox-backup-server 2>/dev/null \
-            | awk -F'|' '{gsub(/ /,"",$2); print $2}' \
-            | grep "^${PVE_VER}\." | head -1)"
-        if [ -n "${MATCHING_PBS}" ]; then
-            echo "  Found matching version in pipbs repo: ${MATCHING_PBS}"
-            echo "  Pinning proxmox-backup-server=${MATCHING_PBS} to match proxmox-ve ${PVE_VER}.x"
-            PBS_INSTALL_VERSION="${MATCHING_PBS}"
-        else
-            echo "  No matching version for proxmox-ve ${PVE_VER}.x found in pipbs repo."
-            echo "  Installing latest pipbs candidate (${PBS_CANDIDATE}) — verify compatibility manually:"
-            echo "    pxvirt: https://download.lierfang.com/pxcloud/pxvirt"
-            echo "    pipbs:  https://github.com/dexogen/pipbs"
-        fi
-        echo ""
-    else
-        echo "  Version check OK: pxvirt and pipbs candidate are at matching versions."
-    fi
+    echo "  Checking pxvirt/pipbs compatibility via package metadata..."
+    _arm64_check_compat
+    PBS_INSTALL_VERSION="${PIPBS_PINNED_VERSION:-}"
 fi
 
 if [ -n "${PBS_INSTALL_VERSION}" ]; then
