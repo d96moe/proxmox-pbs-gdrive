@@ -121,10 +121,21 @@ After the full DR restore pipeline:
 The test VMs are **created by Jenkins** from these templates at the start of each build and destroyed afterwards. No persistent test node to maintain.
 
 **Jenkins credentials** (configure in Jenkins → Manage Credentials):
-- SSH private key for `root` on the PVE host — used to clone/start/destroy VMs via `qm`, and to SSH into the cloned test VMs. This is the Jenkins agent key (`/var/lib/jenkins/.ssh/id_ed25519`). The template setup scripts (`setup-x86-template.sh`, `setup-arm64-template.sh`) inject its public key into the templates via cloud-init — so the same key works for both the PVE host and any VM cloned from those templates. Generate it once on the PVE host if it doesn't exist:
+- One SSH key pair is used for everything — SSHing into the PVE host to run `qm` commands, and SSHing into the cloned test VMs. The template setup scripts inject the public key into the templates via cloud-init.
+
+  **Step 1** — Generate the key inside LXC 200 (where Jenkins runs):
   ```bash
-  sudo -u jenkins ssh-keygen -t ed25519 -f /var/lib/jenkins/.ssh/id_ed25519 -N ""
+  pct exec 200 -- sudo -u jenkins ssh-keygen -t ed25519 -f /var/lib/jenkins/.ssh/id_ed25519 -N ""
   ```
+
+  **Step 2** — Add the private key to Jenkins via the web UI: Manage Jenkins → Credentials → Add Credential → *SSH Username with private key* → paste the contents of `/var/lib/jenkins/.ssh/id_ed25519` from inside LXC 200.
+
+  **Step 3** — Before running the template setup scripts on the PVE host, make the public key available there:
+  ```bash
+  mkdir -p /var/lib/jenkins/.ssh
+  pct exec 200 -- cat /var/lib/jenkins/.ssh/id_ed25519.pub > /var/lib/jenkins/.ssh/id_ed25519.pub
+  ```
+  The setup scripts read this path on the PVE host to inject the pubkey into cloud-init.
 
 **CI config files (`ci/config_ci.env`, `ci/config_ci_arm64.env`):**
 
