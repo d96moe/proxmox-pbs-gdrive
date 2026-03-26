@@ -24,6 +24,7 @@ Describe 'restore-1-install.sh: Install PBS and backup tools'
         When run env CI=true bash "${SCRIPTS_DIR}/restore-1-install.sh"
         The status should be success
         The output should include 'restore-1-install.sh COMPLETE'
+        The stderr should be present
     End
 
     It 'proxmox-backup-server is installed'
@@ -97,6 +98,7 @@ print(len([x for x in items if x.get("vmid") == 100]))
     It 'vzdump of LXC 100 to PBS succeeds'
         When call run_pbs_backup
         The status should be success
+        The output should include 'Finished Backup'
     End
 
     It 'at least one ct/100 snapshot exists in PBS'
@@ -118,6 +120,7 @@ Describe 'Backup PVE config to Google Drive'
     It 'backup-pve-config.sh completes successfully'
         When run /usr/local/bin/backup-pve-config.sh
         The status should be success
+        The output should include 'backup complete'
     End
 
     It 'config tarball is present on Google Drive'
@@ -155,6 +158,7 @@ Describe 'Restic backup of PBS datastore to Google Drive'
     It 'restic backup to Google Drive completes'
         When call run_restic_backup
         The status should be success
+        The output should include 'snapshot'
     End
 
     It 'at least one restic snapshot exists on Google Drive'

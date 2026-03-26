@@ -25,6 +25,7 @@ Describe 'restore-1-install.sh: Install PBS and backup tools'
         When run env CI=true bash "${SCRIPTS_DIR}/restore-1-install.sh"
         The status should be success
         The output should include 'restore-1-install.sh COMPLETE'
+        The stderr should be present
     End
 
     It 'proxmox-backup-server is installed'
@@ -67,6 +68,7 @@ Describe 'restore-2-auth.sh: Restore rclone config + PBS datastore from GDrive'
         When run env CI=true bash "${SCRIPTS_DIR}/restore-2-auth.sh"
         The status should be success
         The output should include 'restore-2-auth.sh COMPLETE'
+        The stderr should be present
     End
 
     It 'rclone.conf is present after restore'
@@ -94,6 +96,7 @@ Describe 'restore-3-pve.sh: Wire PBS storage into PVE'
         When run env CI=true bash "${SCRIPTS_DIR}/restore-3-pve.sh"
         The status should be success
         The output should include 'restore-3-pve.sh COMPLETE'
+        The stderr should be present
     End
 
     It 'PBS storage is registered in PVE'
