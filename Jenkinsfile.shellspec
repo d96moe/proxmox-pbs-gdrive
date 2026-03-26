@@ -113,20 +113,8 @@ ENDSSH
                     scp ${SSH_OPTS} -r \
                         ${WORKSPACE}/. \
                         root@${VM_IP}:${SCRIPTS_DIR}/
-                """
-            }
-        }
-
-        stage('Install tools') {
-            steps {
-                echo "Installing PBS, rclone, restic, resticprofile on CI VM..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-cd ${SCRIPTS_DIR}
-cp config_ci.env config.env
-CI=true bash restore-1-install.sh
-ENDSSH
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "cp ${SCRIPTS_DIR}/config_ci.env ${SCRIPTS_DIR}/config.env"
                 """
             }
         }
@@ -139,102 +127,6 @@ ENDSSH
 set -euo pipefail
 curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
 shellspec --version
-ENDSSH
-                """
-            }
-        }
-
-        stage('Create test LXC') {
-            steps {
-                echo "Creating minimal Debian 12 LXC (ID 100) as backup target..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-
-pveam update
-
-DEBIAN12_TMPL=\$(pveam available --section system 2>/dev/null \
-    | awk '/debian-12-standard/ {print \$2}' | sort -V | tail -1)
-[ -z "\${DEBIAN12_TMPL}" ] && DEBIAN12_TMPL="debian-12-standard_12.12-1_amd64.tar.zst"
-
-pveam download local "\${DEBIAN12_TMPL}"
-
-LOCAL_TMPL=\$(pveam list local 2>/dev/null \
-    | awk '/debian-12-standard/ {print \$1}' | sort -V | tail -1)
-[ -z "\${LOCAL_TMPL}" ] && { echo "ERROR: no debian-12 template in local"; exit 1; }
-
-pct create 100 "\${LOCAL_TMPL}" \
-    --hostname ci-test-lxc \
-    --memory 64 \
-    --rootfs local:1 \
-    --net0 name=eth0,bridge=vmbr0,ip=10.10.0.50/24,gw=10.10.0.1 \
-    --unprivileged 1 \
-    --start 1
-
-echo "Test LXC 100 created and started"
-pct status 100
-ENDSSH
-                """
-            }
-        }
-
-        stage('PBS backup') {
-            steps {
-                echo "Taking PBS backup of test LXC 100 -> pbs-ci storage..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-source /opt/proxmox-restore/config.env
-
-FINGERPRINT=\$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (sha256):" | awk '{print \$NF}')
-pvesh create /storage \
-    --storage "\${PVE_PBS_STORAGE_ID}" \
-    --type pbs \
-    --server "\${PVE_PBS_SERVER}" \
-    --datastore "\${PBS_DATASTORE_NAME}" \
-    --username "\${PBS_USER}" \
-    --password "\${PBS_USER_PASSWORD}" \
-    --fingerprint "\${FINGERPRINT}" \
-    --content backup \
-    --prune-backups "\${PBS_RETENTION_LOCAL}" || true
-
-systemctl is-active --quiet pvedaemon || systemctl start pvedaemon pveproxy pvestatd
-sleep 3
-
-vzdump 100 --storage "\${PVE_PBS_STORAGE_ID}" --mode snapshot --compress zstd
-echo "PBS backup complete"
-ENDSSH
-                """
-            }
-        }
-
-        stage('Backup PVE config to GDrive') {
-            steps {
-                echo "Backing up PVE host config to Google Drive..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-/usr/local/bin/backup-pve-config.sh
-ENDSSH
-                """
-            }
-        }
-
-        stage('Restic backup to GDrive') {
-            steps {
-                echo "Backing up PBS datastore to Google Drive via resticprofile..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-/usr/local/bin/stop-proxmox-backup.sh
-
-resticprofile \
-    -c /etc/resticprofile/profiles.yaml \
-    -n pbs-backup \
-    backup
-
-systemctl start proxmox-backup proxmox-backup-proxy
-echo "Restic backup to GDrive complete"
 ENDSSH
                 """
             }

@@ -154,19 +154,6 @@ ENDSSH
             }
         }
 
-        stage('Install tools (restore-1-install.sh Step 1+)') {
-            steps {
-                echo "Installing PBS (pipbs), rclone, restic, resticprofile..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-cd ${SCRIPTS_DIR}
-CI=true bash restore-1-install.sh
-ENDSSH
-                """
-            }
-        }
-
         stage('Install ShellSpec') {
             steps {
                 echo "Installing ShellSpec on arm64 CI VM..."
@@ -196,69 +183,6 @@ rclone copy "\${GDRIVE_CONFIG_PATH}/\${LATEST}" /tmp/
 echo "Removing rclone.conf to simulate fresh install..."
 rm -f /root/.config/rclone/rclone.conf
 echo "Staged: /tmp/\${LATEST}"
-ENDSSH
-                """
-            }
-        }
-
-        stage('Restore from GDrive (restore-2-auth.sh)') {
-            steps {
-                echo "Restoring PBS datastore from Google Drive..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-cd ${SCRIPTS_DIR}
-CI=true bash restore-2-auth.sh
-ENDSSH
-                """
-            }
-        }
-
-        stage('Configure PVE (restore-3-pve.sh)') {
-            steps {
-                echo "Wiring PBS storage into PVE, enabling schedules..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-cd ${SCRIPTS_DIR}
-CI=true bash restore-3-pve.sh
-ENDSSH
-                """
-            }
-        }
-
-        stage('Restore LXC from PBS') {
-            steps {
-                echo "Restoring LXC 100 from PBS — full DR end-to-end..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-# Create vmbr0 bridge if missing (needed for LXC network config)
-if ! ip link show vmbr0 &>/dev/null; then
-    ip link add name vmbr0 type bridge 2>/dev/null || true
-    ip link set vmbr0 up
-fi
-systemctl is-active --quiet pvedaemon || systemctl start pvedaemon pveproxy pvestatd
-sleep 3
-
-SNAP=\$(pvesh get /nodes/\$(hostname)/storage/pbs-ci/content --output-format json 2>/dev/null \
-    | python3 -c "
-import json, sys
-items = json.load(sys.stdin)
-ct = [x for x in items if x.get('vmid') == 100]
-if not ct:
-    raise SystemExit('ERROR: no backup for CT 100 in pbs-ci')
-ct.sort(key=lambda x: x.get('ctime', 0))
-print(ct[-1]['volid'])
-")
-echo "Restoring from: \${SNAP}"
-rm -f /etc/pve/lxc/100.conf
-pct restore 100 "\${SNAP}" --storage local
-# Disable seccomp/apparmor — QEMU arm64 emulation blocks some syscalls
-sed -i '/^net/d; /^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
-echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
-pct start 100
-sleep 5
 ENDSSH
                 """
             }

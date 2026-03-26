@@ -1,85 +1,171 @@
 #!/bin/bash
 # =============================================================================
-# spec/scenario_b_spec.sh — ShellSpec integration tests for Scenario B
+# spec/scenario_b_spec.sh — Scenario B: DR Restore
 #
-# Verifies end-state after full DR restore:
-#   config.db restored → rclone auth working → PBS wired into PVE →
-#   LXC snapshot visible in PBS → LXC 100 restored and running.
+# ShellSpec DRIVES the full DR restore flow:
+#   1. restore-1-install.sh (Step 1+) — installs PBS, rclone, restic, resticprofile
+#   2. restore-2-auth.sh — restores rclone config from local tar, mounts PBS
+#   3. restore-3-pve.sh — wires PBS storage into PVE, enables schedules
+#   4. Restores LXC 100 from PBS snapshot
+#   5. Verifies LXC is running
 #
-# Run by Jenkinsfile.dr-test after all pipeline stages complete.
-#
-# Prerequisites: spec_helper.sh sources config.env and exports all variables.
+# Jenkins handles only: VM/disk setup, credentials, script deploy,
+# PVE install + reboot (pve_install_spec.sh), pve-cluster fix, ShellSpec install,
+# and staging the local config tar in /tmp/.
 # =============================================================================
 
-# spec_helper.sh is loaded automatically via --require spec_helper in .shellspec
-# (sourcing manually is not possible here since $0 points to the ShellSpec runner)
+SCRIPTS_DIR="${SCRIPTS_DIR:-/opt/proxmox-restore}"
+ARCH="$(uname -m)"
 
-# -----------------------------------------------------------------------------
-# Helper functions
-# -----------------------------------------------------------------------------
+# =============================================================================
+Describe 'restore-1-install.sh: Install PBS and backup tools'
+# =============================================================================
 
-get_pbs_fingerprint() {
-    proxmox-backup-manager cert info 2>/dev/null \
-        | grep 'Fingerprint (sha256):' \
-        | awk '{print $NF}'
-}
-
-count_pbs_ct100_snapshots_via_client() {
-    local fingerprint
-    fingerprint="$(get_pbs_fingerprint)"
-    PBS_PASSWORD="${PBS_USER_PASSWORD}" PBS_FINGERPRINT="${fingerprint}" \
-        proxmox-backup-client snapshots \
-        --repository "${PBS_USER}@${PVE_PBS_SERVER}:${PBS_DATASTORE_NAME}" 2>&1 \
-        | grep -c 'ct/' || echo '0'
-}
-
-# -----------------------------------------------------------------------------
-# Tests
-# -----------------------------------------------------------------------------
-
-Describe 'Prerequisites'
-    It 'restic snapshot repo exists in GDrive bu/ci-restore-test (run proxmox-shellspec / Scenario A at least once first)'
-        When run rclone lsd "${RESTICPROFILE_GDRIVE_REMOTE}:bu"
-        The output should include 'ci-restore-test'
+    It 'completes successfully'
+        When run env CI=true bash "${SCRIPTS_DIR}/restore-1-install.sh"
+        The status should be success
     End
-End
 
-Describe 'PVE cluster'
-    It 'pve-cluster is active after config restore'
-        When run systemctl is-active pve-cluster
+    It 'proxmox-backup-server is installed'
+        When run dpkg-query -W -f='${Status}' proxmox-backup-server
+        The output should include 'install ok installed'
+    End
+
+    It 'proxmox-backup service is active'
+        When run systemctl is-active proxmox-backup
         The output should eq 'active'
     End
-End
 
-Describe 'Config database restore'
-    It 'LXC 100 is visible in PVE config (config.db was restored)'
-        When run pct config 100
-        The output should include 'hostname'
-    End
-End
-
-Describe 'rclone credentials'
-    It 'can access Google Drive (credentials restored from config tar)'
-        When run rclone lsd "${RESTICPROFILE_GDRIVE_REMOTE}:bu"
-        The output should include 'ci-restore-test'
-    End
-End
-
-Describe 'PBS storage integration'
-    It 'pbs-ci storage exists in PVE'
-        When run pvesh get "/storage/${PVE_PBS_STORAGE_ID}"
-        The output should include 'pbs'
+    It 'PBS datastore is mounted'
+        When run mountpoint -q /mnt/pbs
+        The status should be success
     End
 
-    It 'at least one ct/100 snapshot is visible via PBS client'
-        When call count_pbs_ct100_snapshots_via_client
+    It 'restic is installed'
+        When run which restic
+        The status should be success
+    End
+
+    It 'rclone is installed'
+        When run which rclone
+        The status should be success
+    End
+
+    It 'resticprofile is installed'
+        When run which resticprofile
+        The status should be success
+    End
+
+End
+
+# =============================================================================
+Describe 'restore-2-auth.sh: Restore rclone config + PBS datastore from GDrive'
+# =============================================================================
+
+    It 'completes successfully'
+        When run env CI=true bash "${SCRIPTS_DIR}/restore-2-auth.sh"
+        The status should be success
+    End
+
+    It 'rclone.conf is present after restore'
+        When run test -f /root/.config/rclone/rclone.conf
+        The status should be success
+    End
+
+    It 'can access Google Drive after auth restore'
+        When run bash -c "source ${SCRIPTS_DIR}/config.env && rclone lsd \"\${RESTICPROFILE_GDRIVE_REMOTE}:bu\" 2>/dev/null"
+        The status should be success
+    End
+
+    It 'PBS datastore is still mounted after restore'
+        When run mountpoint -q /mnt/pbs
+        The status should be success
+    End
+
+End
+
+# =============================================================================
+Describe 'restore-3-pve.sh: Wire PBS storage into PVE'
+# =============================================================================
+
+    It 'completes successfully'
+        When run env CI=true bash "${SCRIPTS_DIR}/restore-3-pve.sh"
+        The status should be success
+    End
+
+    It 'PBS storage is registered in PVE'
+        When run bash -c "source ${SCRIPTS_DIR}/config.env && pvesh get /storage/\"\${PVE_PBS_STORAGE_ID}\" 2>/dev/null"
+        The status should be success
+    End
+
+    count_pbs_ct100_snapshots() {
+        source "${SCRIPTS_DIR}/config.env"
+        pvesh get "/nodes/$(hostname)/storage/${PVE_PBS_STORAGE_ID}/content" \
+            --output-format json 2>/dev/null \
+            | python3 -c '
+import json, sys
+items = json.load(sys.stdin)
+print(len([x for x in items if x.get("vmid") == 100]))
+'
+    }
+
+    It 'at least one ct/100 snapshot is visible in PBS'
+        When call count_pbs_ct100_snapshots
         The output should not eq '0'
     End
+
 End
 
-Describe 'Full DR: LXC restore from PBS'
-    It 'LXC 100 is running after pct restore'
+# =============================================================================
+Describe 'Restore LXC 100 from PBS'
+# =============================================================================
+
+    restore_lxc_100() {
+        source "${SCRIPTS_DIR}/config.env"
+
+        if ! ip link show vmbr0 &>/dev/null; then
+            ip link add name vmbr0 type bridge 2>/dev/null || true
+            ip link set vmbr0 up
+        fi
+
+        systemctl is-active --quiet pvedaemon \
+            || systemctl start pvedaemon pveproxy pvestatd
+        sleep 3
+
+        local SNAP
+        SNAP=$(pvesh get "/nodes/$(hostname)/storage/${PVE_PBS_STORAGE_ID}/content" \
+            --output-format json 2>/dev/null \
+            | python3 -c "
+import json, sys
+items = json.load(sys.stdin)
+ct = [x for x in items if x.get('vmid') == 100]
+if not ct:
+    raise SystemExit('ERROR: no backup for CT 100 in ${PVE_PBS_STORAGE_ID}')
+ct.sort(key=lambda x: x.get('ctime', 0))
+print(ct[-1]['volid'])
+")
+
+        echo "Restoring from: ${SNAP}"
+        rm -f /etc/pve/lxc/100.conf
+        pct restore 100 "${SNAP}" --storage local
+
+        if [ "${ARCH}" = "aarch64" ]; then
+            sed -i '/^net/d; /^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
+            echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
+        fi
+
+        pct start 100
+        sleep 5
+    }
+
+    It 'pct restore and start of LXC 100 succeeds'
+        When call restore_lxc_100
+        The status should be success
+    End
+
+    It 'LXC 100 is running'
         When run pct status 100
         The output should include 'running'
     End
+
 End
