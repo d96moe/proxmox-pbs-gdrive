@@ -10,8 +10,8 @@ Two Jenkins pipelines automatically verify the scripts end-to-end on real Proxmo
 |---|---|---|---|---|
 | Scenario A | `proxmox-ci-backup` | `ci/Jenkinsfile.shellspec` | Weekly | Install + PBS backup + GDrive backup |
 | Scenario B (DR) | `proxmox-ci-dr` | `ci/Jenkinsfile.shellspec-dr` | Weekly | Full DR restore from GDrive |
-| Scenario A (ARM64) | `proxmox-ci-backup-arm64` | `ci/Jenkinsfile.shellspec-arm64` | Weekly | Same as A, on Pi 5 |
-| Scenario B (ARM64) | `proxmox-ci-dr-arm64` | `ci/Jenkinsfile.shellspec-dr-arm64` | Weekly | Full DR restore on Pi 5 |
+| Scenario A (ARM64) | `proxmox-ci-backup-arm64` | `ci/Jenkinsfile.shellspec-arm64` | Weekly | Same as A, emulated arm64 on x86_64 host |
+| Scenario B (ARM64) | `proxmox-ci-dr-arm64` | `ci/Jenkinsfile.shellspec-dr-arm64` | Weekly | Full DR restore, emulated arm64 on x86_64 host |
 
 Scenario B depends on Scenario A having run at least once (needs a restic snapshot and config tarball on Google Drive).
 
@@ -28,30 +28,48 @@ This separation is intentional: Jenkins shows you everything that happened; Shel
 
 ---
 
-## Test Infrastructure (Nested Proxmox)
+## Test Infrastructure
 
-The CI setup uses **nested Proxmox** — a full Proxmox VE instance running inside a privileged LXC container on the host PVE node. This means the scripts run against a real `pvenode` + `pvesh` + `pct` environment, not a mock.
+### x86_64: Nested Proxmox inside a privileged LXC
+
+The x86_64 pipelines use **nested Proxmox** — a full PVE instance running inside a privileged LXC container on the host PVE node. This means the scripts run against a real `pvesh` / `pct` environment, not a mock.
 
 ```
-Physical host (PVE)
-    ├── LXC 200  — Jenkins agent (runs the pipeline, issues pct exec commands)
+Physical x86_64 host (PVE)
+    ├── LXC 200  — Jenkins agent (runs pipeline, issues pct exec commands)
     └── LXC 199  — Nested PVE node under test (full Proxmox VE inside a privileged LXC)
                         ├── PBS installed here by restore-1-install.sh
                         ├── test LXC created and backed up here
                         └── DR restore runs here (scenario B)
 ```
 
-LXC 199 is a **privileged** LXC container with nesting enabled (`features: nesting=1`). This is required for PVE and PBS to run inside it — systemd, cgroups, and `/dev` access all need elevated container privileges.
+LXC 199 is a **privileged** container with nesting enabled (`features: nesting=1`) — required for PVE and PBS to run inside it (systemd, cgroups, `/dev` access).
 
-Jenkins (LXC 200) runs commands on LXC 199 via `pct exec 199 -- bash -c "..."`, which avoids needing SSH into the nested node and keeps networking simple.
+Jenkins (LXC 200) runs commands on LXC 199 via `pct exec 199 -- bash -c "..."` — no SSH into the nested node needed.
 
-For ARM64, the same pattern runs on a Raspberry Pi 5 (the host PVE is pxvirt, PBS is pipbs).
+### arm64: Fully emulated ARM64 VM on x86_64 host
 
-| Container | Role | Notes |
+The arm64 pipelines do **not** run on real Pi 5 hardware. Instead, Jenkins clones a vanilla Debian arm64 VM template (template 9002) on the same x86_64 host and runs it under **full QEMU ARM64 emulation — no KVM acceleration**.
+
+```
+Physical x86_64 host (PVE)
+    ├── LXC 200         — Jenkins agent
+    └── VM (clone of 9002) — vanilla Debian arm64, fully QEMU-emulated
+                                ├── Step 0 of restore-1-install.sh installs pxvirt (arm64 PVE) and reboots
+                                ├── Step 1+ installs pipbs (arm64 PBS), rclone, restic
+                                ├── test LXC created and backed up here
+                                └── Jenkins accesses via SSH (not pct exec)
+```
+
+PVE itself is **installed by the script** (`restore-1-install.sh` Step 0 installs pxvirt and reboots) — the template starts as plain Debian with no PVE. This tests the full arm64 install path from scratch.
+
+Full QEMU emulation means arm64 pipelines run **3–5× slower** than x86_64.
+
+| Node | Role | Access method |
 |---|---|---|
-| LXC 200 | Jenkins agent, pipeline executor | Runs on x86_64 host PVE |
-| LXC 199 | Nested PVE node under test | Privileged LXC, nesting=1 |
-| TBD (arm64) | Jenkins agent | Raspberry Pi 5 |
+| LXC 200 | Jenkins agent, pipeline executor | — |
+| LXC 199 | Nested PVE under test (x86_64) | `pct exec 199` |
+| VM (clone of 9002) | Emulated arm64 PVE under test | SSH |
 
 ---
 
@@ -90,7 +108,7 @@ After the full DR restore pipeline:
 - Jenkins running (in this setup: LXC 200 on the x86_64 PVE node)
 - Jenkins Pipeline plugin installed
 - A **test node** (LXC 199) that Jenkins can reach via SSH — this is the Proxmox node the scripts run against. It must have a dedicated PBS partition available before the pipelines run.
-- For ARM64 pipelines: a Raspberry Pi 5 with a running PVE instance and a test LXC template (see [ARM64 Template Setup](#arm64-template-setup))
+- For ARM64 pipelines: the arm64 template VM (9002) must exist on the x86_64 PVE host — run `ci/setup-arm64-template.sh` once to create it (see [ARM64 Template Setup](#arm64-template-setup)). No Pi 5 or separate arm64 hardware needed.
 
 **Jenkins credentials** (configure in Jenkins → Manage Credentials):
 - SSH private key for `root` on the test node — used by the Jenkinsfiles to exec commands via `pct exec`
@@ -125,15 +143,26 @@ For each pipeline, set the **Script Path** in the Jenkins job to the Jenkinsfile
 | proxmox-ci-backup-arm64 | `ci/Jenkinsfile.shellspec-arm64` |
 | proxmox-ci-dr-arm64 | `ci/Jenkinsfile.shellspec-dr-arm64` |
 
-### ARM64 Template Setup
+### VM Templates
 
-The arm64 pipelines require a pre-built LXC template on the Pi 5. Run once:
+Both pipeline families clone a fresh VM from a template for each build and destroy it afterwards. Two templates are needed on the x86_64 PVE host:
+
+| Template ID | Used by | Base OS | Script |
+|---|---|---|---|
+| 9001 | x86_64 pipelines | Vanilla Debian Bookworm x86_64 with cloud-init + Jenkins SSH key | Manual (no script in repo) |
+| 9002 | arm64 pipelines | Vanilla Debian Trixie arm64 with cloud-init + Jenkins SSH key | `ci/setup-arm64-template.sh` |
+
+Neither template has PVE or PBS pre-installed — the whole point is that `restore-1-install.sh` installs them as part of the test.
+
+**Template 9001 (x86_64):** Create a standard Debian Bookworm VM with cloud-init in PVE, add the Jenkins SSH public key to `~/.ssh/authorized_keys`, and convert it to a template (`qm template 9001`). No script provided — this is a one-time manual step.
+
+**Template 9002 (arm64):** Run once on the x86_64 PVE host:
 
 ```bash
 ./ci/setup-arm64-template.sh
 ```
 
-This downloads a vanilla Debian arm64 rootfs from linuxcontainers.org and registers it as a PVE template.
+This installs AAVMF arm64 UEFI firmware, downloads a vanilla Debian Trixie arm64 cloud image, creates a QEMU VM with `--arch aarch64` for full emulation, and converts it to a template. No Pi 5 or separate arm64 hardware required.
 
 ---
 
