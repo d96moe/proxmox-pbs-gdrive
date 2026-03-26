@@ -54,6 +54,21 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 - **Full DR takes hours** — restoring from GDrive means downloading the entire datastore; not a quick recovery
 - **Google Drive quota** — depending on the number of VMs/LXCs and their sizes, a rather large GDrive quota may be needed; the base usage mirrors your PBS datastore size, and retention keeping multiple snapshots adds on top of that
 
+  **Real-world example (this homelab):**
+
+  | Type | Count | Notes |
+  |---|---|---|
+  | VMs | 4 | Windows 11 (128 GB), Home Assistant OS (128 GB), Ollama (150 GB), macOS (128 GB) |
+  | LXCs | 8 | openwebui, unifi-os-server, ha-mcp, mariadb, vpn-checker, jenkins, and a couple of utility containers |
+
+  | Storage | Usage |
+  |---|---|
+  | PBS on disk (`/mnt/pbs`, 344 GB partition) | 275 GB used (81%) |
+  | GDrive — latest restic snapshot | ~309 GiB |
+  | GDrive — total repo (5 snapshots, retention: keep-last=3 / keep-daily=6 / keep-weekly=3 / keep-monthly=5) | **1.34 TiB** |
+
+  With restic deduplication, 5 snapshots of ~300 GiB each totals 1.34 TiB rather than the ~1.5 TiB you'd expect without it — but it's still substantial. Plan your GDrive quota accordingly.
+
 ---
 
 ## How It Works
