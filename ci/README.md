@@ -53,8 +53,8 @@ Physical x86_64 host (PVE)
     │                              └── destroyed after build
     └── VM (clone of 9002)   — arm64 PVE node under test, fresh each build
                                    ├── vanilla Debian arm64 (no PVE in template)
-                                   ├── Step 0: restore-1-install.sh installs pxvirt, reboots
-                                   ├── Step 1+: pipbs, rclone, restic installed
+                                   ├── run 1: restore-1-install.sh detects no PVE → installs pxvirt, reboots
+                                   ├── run 2: restore-1-install.sh installs pipbs, rclone, restic
                                    ├── test LXC created and backed up
                                    └── destroyed after build
 ```
