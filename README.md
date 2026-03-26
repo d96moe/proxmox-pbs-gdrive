@@ -107,6 +107,8 @@ backup-pve-config.sh (nightly at 04:00)
 
 > **Why Proxmox on a Pi 5?** The specific use case here is a small remote location with minimal IT infrastructure: running **Home Assistant** and a full **Unifi OS** instance side by side. Unifi OS is needed specifically for site-to-site VPN ("site magic") — this is not supported by the Unifi Network add-on in Home Assistant and requires a real Unifi OS server. A Pi 5 running Proxmox VE covers both on a single low-power device: HA and Unifi OS each get their own LXC/VM, no separate hardware needed.
 
+> ⚠️ **Do NOT run this from an SD card.** Proxmox VE's write patterns (journals, VM disk I/O, PBS chunk store) will destroy an SD card quickly. You need an SSD. The setup this repo was built on uses a Pi 5 booting from an NVMe drive connected via USB adapter — cheap and works well.
+
 ---
 
 ## Which Scenario Applies to You?
