@@ -90,11 +90,11 @@ backup-pve-config.sh (nightly at 04:00)
 
 | Component | x86_64 standard | Raspberry Pi 5 (aarch64) | Links |
 |---|---|---|---|
-| <img src="https://www.proxmox.com/images/proxmox/Proxmox-symbol-mark.png" height="20"> Proxmox VE | 9.1.4 | 9.0.10-2 (pxvirt) | [proxmox.com](https://www.proxmox.com/en/proxmox-virtual-environment) · [pxvirt (arm64)](https://download.lierfang.com/pxcloud/pxvirt) |
-| <img src="https://www.proxmox.com/images/proxmox/Proxmox-symbol-mark.png" height="20"> PBS | 4.1.4-1 (official) | 4.1.4-1 (pipbs) | [proxmox.com](https://www.proxmox.com/en/proxmox-backup-server) · [pipbs (arm64)](https://github.com/dexogen/pipbs) |
-| <img src="https://rclone.org/img/rclone-120x120.png" height="20"> rclone | 1.73.1 | 1.73.2 | [rclone.org](https://rclone.org/) |
-| <img src="https://restic.net/img/logo.png" height="20"> restic | 0.18.0 | 0.18.0 | [restic.net](https://restic.net/) |
-| <img src="https://raw.githubusercontent.com/creativeprojects/resticprofile/master/docs/content/images/logo.png" height="20"> resticprofile | — | — | [creativeprojects.github.io](https://creativeprojects.github.io/resticprofile/) |
+| <img src="https://cdn.simpleicons.org/proxmox" height="20"> Proxmox VE | 9.1.4 | 9.0.10-2 (pxvirt) | [proxmox.com](https://www.proxmox.com/en/proxmox-virtual-environment) · [pxvirt (arm64)](https://download.lierfang.com/pxcloud/pxvirt) |
+| <img src="https://cdn.simpleicons.org/proxmox" height="20"> PBS | 4.1.4-1 (official) | 4.1.4-1 (pipbs) | [proxmox.com](https://www.proxmox.com/en/proxmox-backup-server) · [pipbs (arm64)](https://github.com/dexogen/pipbs) |
+| <img src="https://cdn.simpleicons.org/rclone" height="20"> rclone | 1.73.1 | 1.73.2 | [rclone.org](https://rclone.org/) |
+| <img src="https://restic.net/apple-touch-icon-144-precomposed.png" height="20"> restic | 0.18.0 | 0.18.0 | [restic.net](https://restic.net/) |
+| <img src="https://creativeprojects.github.io/resticprofile/images/logo.png" height="20"> resticprofile | — | — | [creativeprojects.github.io](https://creativeprojects.github.io/resticprofile/) |
 | <img src="https://www.debian.org/logos/openlogo-nd-100.png" height="20"> Debian (base) | Bookworm | Trixie | [debian.org](https://www.debian.org/) |
 | <img src="https://www.raspberrypi.com/app/uploads/2022/02/COLOUR-Raspberry-Pi-Symbol-Registered.png" height="20"> Hardware | Any x86_64 with NVMe | Pi 5 8GB + NVMe (tested via USB adapter) | [Raspberry Pi 5](https://www.raspberrypi.com/products/raspberry-pi-5/) |
 
