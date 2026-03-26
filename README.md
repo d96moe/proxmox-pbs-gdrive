@@ -58,8 +58,8 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 
   | Type | Count | Notes |
   |---|---|---|
-  | VMs | 4 | Windows 11 (128 GB), Home Assistant OS (128 GB), Ollama (150 GB), macOS (128 GB) |
-  | LXCs | 8 | openwebui, unifi-os-server, ha-mcp, mariadb, vpn-checker, jenkins, and a couple of utility containers |
+  | VMs | 4 | 1× Windows VM, 1× macOS VM, 1× Linux VM, 1× Home Assistant OS |
+  | LXCs | 8 | mix of service containers (network, automation, databases, utilities) |
 
   | Storage | Usage |
   |---|---|
