@@ -87,7 +87,7 @@ backup-pve-config.sh (nightly at 04:00)
 Before running any scripts, make sure you have:
 
 - A **Google account** with Google Drive — this is where all offsite backups land
-- **Enough Google Drive space** — plan for roughly 1.5× the size of your PBS datastore (the initial upload is the full datastore; incremental snapshots grow it slowly after that). Google One 100 GB is usually enough for a small homelab.
+- **Enough Google Drive space** — plan for roughly 1.5× the size of your PBS datastore (the initial upload is the full datastore; incremental snapshots grow it slowly after that)
 - **Root SSH access** to your Proxmox node
 - A **dedicated partition** for PBS (see below) — this must be prepared before running any scripts
 - A **restic password** — pick one and store it in a password manager before you start. You cannot recover your Google Drive backups without it.
