@@ -63,7 +63,7 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 
   | Storage | Usage |
   |---|---|
-  | PBS on disk (`/mnt/pbs`, 344 GB partition) | 275 GB used (81%) |
+  | PBS on disk (`/mnt/pbs`) | 275 GB used |
   | GDrive — actual disk usage (5 snapshots, deduplicated) | **~423 GiB** |
 
   5 snapshots of ~300 GiB each would be ~1.5 TiB without deduplication — restic's cross-snapshot dedup brings the actual GDrive usage down to 423 GiB (~3.5× ratio). Still substantial; plan your quota accordingly.
