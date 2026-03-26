@@ -148,9 +148,71 @@ EOF
         > /etc/apt/trusted.gpg.d/pxvirt.gpg
     echo "deb https://download.lierfang.com/pxcloud/pxvirt trixie main" \
         > /etc/apt/sources.list.d/pxvirt.list
+
+    # Temporarily add pipbs repo so we can compare versions before installing anything
+    apt_get install -y ca-certificates curl gnupg
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
+        | gpg --batch --no-tty --dearmor \
+        > /etc/apt/keyrings/pipbs.gpg
+    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ trixie main" \
+        > /etc/apt/sources.list.d/pipbs.list
     apt_get update
+
+    # Check pxvirt vs pipbs version compatibility BEFORE installing either
+    PVE_CANDIDATE="$(apt-cache policy proxmox-ve 2>/dev/null | awk '/Candidate:/{print $2}')"
+    PBS_CANDIDATE_PRE="$(apt-cache policy proxmox-backup-server 2>/dev/null | awk '/Candidate:/{print $2}')"
+    PVE_CANDIDATE_MM="$(echo "${PVE_CANDIDATE}" | cut -d. -f1,2)"
+    PBS_CANDIDATE_MM="$(echo "${PBS_CANDIDATE_PRE}" | cut -d. -f1,2)"
+    echo "  pxvirt candidate  (proxmox-ve):            ${PVE_CANDIDATE} (major.minor: ${PVE_CANDIDATE_MM})"
+    echo "  pipbs candidate   (proxmox-backup-server): ${PBS_CANDIDATE_PRE} (major.minor: ${PBS_CANDIDATE_MM})"
+
+    PVE_INSTALL_VERSION=""
+    if [ -n "${PVE_CANDIDATE_MM}" ] && [ -n "${PBS_CANDIDATE_MM}" ] && [ "${PVE_CANDIDATE_MM}" != "${PBS_CANDIDATE_MM}" ]; then
+        echo ""
+        echo "WARNING: pxvirt and pipbs are at different major.minor versions!"
+        echo "  proxmox-ve in pxvirt repo:              ${PVE_CANDIDATE_MM}.x"
+        echo "  proxmox-backup-server in pipbs repo:    ${PBS_CANDIDATE_MM}.x"
+        # Prefer to align pxvirt to pipbs (pipbs repo may lag behind pxvirt)
+        MATCHING_PVE="$(apt-cache madison proxmox-ve 2>/dev/null \
+            | awk -F'|' '{gsub(/ /,"",$2); print $2}' \
+            | grep "^${PBS_CANDIDATE_MM}\." | head -1)"
+        if [ -n "${MATCHING_PVE}" ]; then
+            echo "  Found matching pxvirt version: ${MATCHING_PVE}"
+            echo "  Pinning proxmox-ve=${MATCHING_PVE} to match pipbs ${PBS_CANDIDATE_MM}.x"
+            PVE_INSTALL_VERSION="${MATCHING_PVE}"
+        else
+            echo "  No matching pxvirt version for pipbs ${PBS_CANDIDATE_MM}.x found."
+            echo "  Checking if older pipbs version matches pxvirt ${PVE_CANDIDATE_MM}.x..."
+            MATCHING_PBS_PRE="$(apt-cache madison proxmox-backup-server 2>/dev/null \
+                | awk -F'|' '{gsub(/ /,"",$2); print $2}' \
+                | grep "^${PVE_CANDIDATE_MM}\." | head -1)"
+            if [ -n "${MATCHING_PBS_PRE}" ]; then
+                echo "  Found matching pipbs version: ${MATCHING_PBS_PRE}"
+                echo "  pxvirt will install at latest (${PVE_CANDIDATE}); pipbs will be pinned later."
+                # Store for use in Step 1 — export so subshells/later sections see it
+                export PIPBS_PINNED_VERSION="${MATCHING_PBS_PRE}"
+            else
+                echo "  No compatible version pair found. Installing latest of both and WARNING:"
+                echo "    pxvirt: https://download.lierfang.com/pxcloud/pxvirt"
+                echo "    pipbs:  https://github.com/dexogen/pipbs"
+            fi
+        fi
+        echo ""
+    else
+        echo "  Version check OK: pxvirt and pipbs candidates are at matching versions."
+    fi
+
+    # Remove pipbs repo — Step 1 will re-add it properly after reboot
+    rm -f /etc/apt/sources.list.d/pipbs.list
+    apt_get update -qq
+
     for _attempt in 1 2 3; do
-        apt_get install -y proxmox-ve pve-qemu-kvm && break
+        if [ -n "${PVE_INSTALL_VERSION}" ]; then
+            apt_get install -y "proxmox-ve=${PVE_INSTALL_VERSION}" pve-qemu-kvm && break
+        else
+            apt_get install -y proxmox-ve pve-qemu-kvm && break
+        fi
         echo "  pxvirt install attempt ${_attempt}/3 failed, retrying in 15s..."
         sleep 15
         apt_get update -qq
@@ -330,11 +392,66 @@ else
         > /etc/apt/sources.list.d/pbs.list
 fi
 apt_get update
-apt_get install -y proxmox-backup-server
+
+# ARM64 only: check version compatibility BEFORE installing pipbs.
+# If Step 0 already detected a mismatch and set PIPBS_PINNED_VERSION, use it.
+# Otherwise (second run after reboot) do the version check fresh here.
+PBS_INSTALL_VERSION="${PIPBS_PINNED_VERSION:-}"
+if [ "${ARCH}" = "aarch64" ] && [ -z "${PBS_INSTALL_VERSION}" ]; then
+    PVE_VER="$(dpkg-query -W -f='${Version}' proxmox-ve 2>/dev/null | cut -d. -f1,2)"
+    PBS_CANDIDATE="$(apt-cache policy proxmox-backup-server 2>/dev/null | awk '/Candidate:/{print $2}')"
+    PBS_CANDIDATE_MM="$(echo "${PBS_CANDIDATE}" | cut -d. -f1,2)"
+    echo "  pxvirt installed  (proxmox-ve):            ${PVE_VER}"
+    echo "  pipbs candidate   (proxmox-backup-server): ${PBS_CANDIDATE} (major.minor: ${PBS_CANDIDATE_MM})"
+    if [ -n "${PVE_VER}" ] && [ -n "${PBS_CANDIDATE_MM}" ] && [ "${PVE_VER}" != "${PBS_CANDIDATE_MM}" ]; then
+        echo ""
+        echo "WARNING: pxvirt and pipbs are at different major.minor versions!"
+        echo "  proxmox-ve installed:           ${PVE_VER}.x  (from pxvirt)"
+        echo "  proxmox-backup-server in repo:  ${PBS_CANDIDATE_MM}.x  (from pipbs)"
+        MATCHING_PBS="$(apt-cache madison proxmox-backup-server 2>/dev/null \
+            | awk -F'|' '{gsub(/ /,"",$2); print $2}' \
+            | grep "^${PVE_VER}\." | head -1)"
+        if [ -n "${MATCHING_PBS}" ]; then
+            echo "  Found matching version in pipbs repo: ${MATCHING_PBS}"
+            echo "  Pinning proxmox-backup-server=${MATCHING_PBS} to match proxmox-ve ${PVE_VER}.x"
+            PBS_INSTALL_VERSION="${MATCHING_PBS}"
+        else
+            echo "  No matching version for proxmox-ve ${PVE_VER}.x found in pipbs repo."
+            echo "  Installing latest pipbs candidate (${PBS_CANDIDATE}) — verify compatibility manually:"
+            echo "    pxvirt: https://download.lierfang.com/pxcloud/pxvirt"
+            echo "    pipbs:  https://github.com/dexogen/pipbs"
+        fi
+        echo ""
+    else
+        echo "  Version check OK: pxvirt and pipbs candidate are at matching versions."
+    fi
+fi
+
+if [ -n "${PBS_INSTALL_VERSION}" ]; then
+    apt_get install -y "proxmox-backup-server=${PBS_INSTALL_VERSION}"
+else
+    apt_get install -y proxmox-backup-server
+fi
 
 # Remove enterprise repos that PBS installer adds automatically (require subscription, cause 401)
 rm -f /etc/apt/sources.list.d/*enterprise*
 apt_get update -qq
+
+# ARM64 only: confirm installed versions match.
+# NOTE: packages are NOT held — security updates must be able to install.
+# Before running 'apt upgrade', always check that both pxvirt and pipbs
+# have released matching versions first. See README.md for upgrade guidance.
+if [ "${ARCH}" = "aarch64" ]; then
+    PBS_VER="$(dpkg-query -W -f='${Version}' proxmox-backup-server 2>/dev/null | cut -d. -f1,2)"
+    echo "  Installed: proxmox-ve=${PVE_VER}  proxmox-backup-server=${PBS_VER}"
+    if [ "${PVE_VER}" != "${PBS_VER}" ]; then
+        echo "  WARNING: installed versions still differ — check compatibility manually."
+    else
+        echo "  Version check OK."
+    fi
+    echo "  IMPORTANT: Before upgrading, verify both pxvirt and pipbs are at the same"
+    echo "  major.minor version. See README.md — 'Keeping pxvirt and pipbs in sync'."
+fi
 
 echo "=== Step 2: Install rclone ==="
 curl https://rclone.org/install.sh | bash
