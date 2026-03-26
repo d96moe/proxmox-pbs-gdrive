@@ -147,14 +147,22 @@ For each pipeline, set the **Script Path** in the Jenkins job to the Jenkinsfile
 
 Both pipeline families clone a fresh VM from a template for each build and destroy it afterwards. Two templates are needed on the x86_64 PVE host:
 
-| Template ID | Used by | Base OS | Script |
-|---|---|---|---|
-| 9001 | x86_64 pipelines | Vanilla Debian Bookworm x86_64 with cloud-init + Jenkins SSH key | Manual (no script in repo) |
-| 9002 | arm64 pipelines | Vanilla Debian Trixie arm64 with cloud-init + Jenkins SSH key | `ci/setup-arm64-template.sh` |
+| Template ID | Name | Used by | Base OS | PVE pre-installed | Script |
+|---|---|---|---|---|---|
+| 9001 | `restore-test-ci` | x86_64 pipelines | Debian Bookworm x86_64 | Yes | `ci/setup-x86-template.sh` |
+| 9002 | `arm64-restore-ci` | arm64 pipelines | Debian Trixie arm64 | No (installed by CI) | `ci/setup-arm64-template.sh` |
 
-Neither template has PVE or PBS pre-installed — the whole point is that `restore-1-install.sh` installs them as part of the test.
+**Why the difference?** x86_64 PVE installs cleanly from official repos so it's baked into the template. For arm64, installing pxvirt (the community ARM64 PVE port) is exactly what we want to test, so the template starts as plain Debian and `restore-1-install.sh` Step 0 installs pxvirt during the CI run.
 
-**Template 9001 (x86_64):** Create a standard Debian Bookworm VM with cloud-init in PVE, add the Jenkins SSH public key to `~/.ssh/authorized_keys`, and convert it to a template (`qm template 9001`). No script provided — this is a one-time manual step.
+Neither template has PBS pre-installed — `restore-1-install.sh` installs it as part of every test run.
+
+**Template 9001 (x86_64):** Run once on the x86_64 PVE host:
+
+```bash
+./ci/setup-x86-template.sh
+```
+
+Downloads a Debian Bookworm x86_64 cloud image, creates a VM with a 16 GB OS disk and a 4 GB PBS data disk, installs Proxmox VE via SSH, then converts to template.
 
 **Template 9002 (arm64):** Run once on the x86_64 PVE host:
 
