@@ -163,6 +163,38 @@ ENDSSH
             }
         }
 
+        stage('Create test LXC') {
+            steps {
+                echo "Creating minimal arm64 LXC (ID 100) as backup target..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+if ! ip link show vmbr0 &>/dev/null; then
+    ip link add name vmbr0 type bridge 2>/dev/null || true
+    ip link set vmbr0 up
+fi
+TMPL_DIR="/var/lib/vz/template/cache"
+TMPL_NAME="debian-12-standard_arm64.tar.xz"
+if [ ! -f "\${TMPL_DIR}/\${TMPL_NAME}" ]; then
+    BASE="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
+    LATEST=\$(curl -sL "\${BASE}/" | grep -oE '[0-9]{8}_[0-9]{2}:[0-9]{2}' | sort -r | head -1)
+    [ -z "\${LATEST}" ] && { echo "ERROR: could not list arm64 templates"; exit 1; }
+    curl -fsSL "\${BASE}/\${LATEST}/rootfs.tar.xz" -o "\${TMPL_DIR}/\${TMPL_NAME}"
+fi
+pct create 100 "\${TMPL_DIR}/\${TMPL_NAME}" \
+    --arch arm64 --ostype unmanaged \
+    --hostname ci-test-lxc --memory 64 \
+    --rootfs local:1 --unprivileged 1
+sed -i '/^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
+echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
+pct start 100
+sleep 5
+pct status 100
+ENDSSH
+                """
+            }
+        }
+
         stage('Install ShellSpec') {
             steps {
                 echo "Installing ShellSpec on arm64 CI VM..."

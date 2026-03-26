@@ -119,6 +119,30 @@ ENDSSH
             }
         }
 
+        stage('Create test LXC') {
+            steps {
+                echo "Creating minimal Debian 12 LXC (ID 100) as backup target..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+pveam update
+DEBIAN12_TMPL=\$(pveam available --section system 2>/dev/null \
+    | awk '/debian-12-standard/ {print \$2}' | sort -V | tail -1)
+[ -z "\${DEBIAN12_TMPL}" ] && DEBIAN12_TMPL="debian-12-standard_12.12-1_amd64.tar.zst"
+pveam download local "\${DEBIAN12_TMPL}"
+LOCAL_TMPL=\$(pveam list local 2>/dev/null \
+    | awk '/debian-12-standard/ {print \$1}' | sort -V | tail -1)
+[ -z "\${LOCAL_TMPL}" ] && { echo "ERROR: no debian-12 template in local"; exit 1; }
+pct create 100 "\${LOCAL_TMPL}" \
+    --hostname ci-test-lxc --memory 64 \
+    --rootfs local:1 --net0 name=eth0,bridge=vmbr0,ip=10.10.0.50/24,gw=10.10.0.1 \
+    --unprivileged 1 --start 1
+pct status 100
+ENDSSH
+                """
+            }
+        }
+
         stage('Install ShellSpec') {
             steps {
                 echo "Installing ShellSpec on CI VM..."

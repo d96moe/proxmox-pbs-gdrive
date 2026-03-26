@@ -2,15 +2,15 @@
 # =============================================================================
 # spec/scenario_a_spec.sh — Scenario A: Install + Backup
 #
-# ShellSpec DRIVES the full install+backup flow:
+# ShellSpec DRIVES the proxmox-restore scripts:
 #   1. restore-1-install.sh (Step 1+) — installs PBS, rclone, restic, resticprofile
-#   2. Creates a test LXC (arch-aware)
-#   3. Backs up LXC to PBS
-#   4. Backs up PVE config to Google Drive
-#   5. Backs up PBS datastore to Google Drive via restic
+#   2. Backs up LXC 100 to PBS (verifies PBS storage is working)
+#   3. backup-pve-config.sh — backs up PVE config to Google Drive
+#   4. resticprofile — backs up PBS datastore to Google Drive
 #
-# Jenkins handles only: VM/disk setup, credentials, script deploy,
-# PVE install + reboot (pve_install_spec.sh), pve-cluster fix, ShellSpec install.
+# Jenkins handles: VM/disk setup, credentials, script deploy,
+# PVE install + reboot (pve_install_spec.sh), pve-cluster fix,
+# ShellSpec install, and creating LXC 100 as a backup target.
 # =============================================================================
 
 SCRIPTS_DIR="${SCRIPTS_DIR:-/opt/proxmox-restore}"
@@ -53,64 +53,6 @@ Describe 'restore-1-install.sh: Install PBS and backup tools'
     It 'resticprofile is installed'
         When run which resticprofile
         The status should be success
-    End
-
-End
-
-# =============================================================================
-Describe 'Create test LXC'
-# =============================================================================
-
-    create_test_lxc() {
-        if ! ip link show vmbr0 &>/dev/null; then
-            ip link add name vmbr0 type bridge 2>/dev/null || true
-            ip link set vmbr0 up
-        fi
-
-        local TMPL_DIR="/var/lib/vz/template/cache"
-
-        if [ "${ARCH}" = "aarch64" ]; then
-            local TMPL_NAME="debian-12-standard_arm64.tar.xz"
-            if [ ! -f "${TMPL_DIR}/${TMPL_NAME}" ]; then
-                local BASE="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
-                local LATEST
-                LATEST=$(curl -sL "${BASE}/" \
-                    | grep -oE '[0-9]{8}_[0-9]{2}:[0-9]{2}' | sort -r | head -1)
-                [ -z "${LATEST}" ] && { echo "ERROR: could not list arm64 templates"; return 1; }
-                curl -fsSL "${BASE}/${LATEST}/rootfs.tar.xz" \
-                    -o "${TMPL_DIR}/${TMPL_NAME}"
-            fi
-            pct create 100 "${TMPL_DIR}/${TMPL_NAME}" \
-                --arch arm64 --ostype unmanaged \
-                --hostname ci-test-lxc --memory 64 \
-                --rootfs local:1 --unprivileged 1
-            sed -i '/^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
-            echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
-        else
-            local TMPL_NAME
-            TMPL_NAME=$(pveam list local 2>/dev/null | grep debian | awk '{print $1}' | head -1)
-            if [ -z "${TMPL_NAME}" ]; then
-                pveam update
-                pveam download local debian-12-standard_amd64.tar.zst
-                TMPL_NAME="local:vztmpl/debian-12-standard_amd64.tar.zst"
-            fi
-            pct create 100 "${TMPL_NAME}" \
-                --hostname ci-test-lxc --memory 64 \
-                --rootfs local:1 --unprivileged 1
-        fi
-
-        pct start 100
-        sleep 5
-    }
-
-    It 'creates and starts LXC 100'
-        When call create_test_lxc
-        The status should be success
-    End
-
-    It 'LXC 100 is running'
-        When run pct status 100
-        The output should include 'running'
     End
 
 End
