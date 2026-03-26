@@ -165,13 +165,22 @@ EOF
         echo "  4k kernel configured (kernel=kernel8.img)"
     fi
 
-    # Disable cloud-init network management so our interfaces config persists.
-    # Do NOT mask systemd-networkd — pxvirt installs resolvconf which feeds
-    # DNS from dns-nameservers in /etc/network/interfaces. Masking networkd
-    # breaks resolvconf's DNS population after reboot.
+    # Disable cloud-init network management
     if [ -d /etc/cloud ]; then
         echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
     fi
+
+    # Remove cloud-init's systemd-networkd config files — they conflict with
+    # ifupdown2's bridge setup (both try to manage eth0 after reboot).
+    rm -f /etc/systemd/network/10-cloud-init-*.network 2>/dev/null || true
+    rm -f /run/systemd/network/10-cloud-init-*.network 2>/dev/null || true
+
+    # Mask systemd-networkd so it does not restart and recreate configs.
+    # ifupdown2 (installed by pxvirt) takes sole control of networking.
+    # resolvconf (also installed by pxvirt) feeds DNS from dns-nameservers
+    # in /etc/network/interfaces — do NOT write a static resolv.conf here.
+    systemctl disable systemd-networkd systemd-networkd-wait-online 2>/dev/null || true
+    systemctl mask systemd-networkd 2>/dev/null || true
 
     PVE_IP_ADDR="${PVE_IP%/*}"
     echo ""
