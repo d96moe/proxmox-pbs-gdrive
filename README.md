@@ -37,6 +37,23 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 
 ---
 
+## Pros and Cons
+
+**Pros:**
+- **Single machine** — no second server or NAS needed for offsite backups
+- **Real cloud backup** — Google Drive is genuinely offsite, survives fire/theft/flood alongside the hardware
+- **Full DR from anywhere** — as long as you have internet access and new hardware, you can recover completely
+- **Self-contained restore** — the config tarball carries credentials and PVE config, so DR requires no manual reclone/restic setup on the new machine
+- **PBS deduplication** — local backups are fast and space-efficient; only changed blocks are stored
+
+**Cons:**
+- **No UI for GDrive backups** — restic is entirely CLI-driven; there is no PVE interface for managing or monitoring Google Drive snapshots
+- **Restoring a single VM from GDrive is not possible** — restic backs up the entire PBS datastore as a unit. If you only want to recover one VM from Google Drive, you still have to restore the full datastore (all VMs and LXCs) first, then restore the individual VM from PBS. There is no way to cherry-pick a single VM directly from GDrive.
+- **First backup is slow** — the initial restic upload is the full PBS datastore; can take many hours depending on size and connection speed
+- **Full DR takes hours** — restoring from GDrive means downloading the entire datastore; not a quick recovery
+
+---
+
 ## How It Works
 
 ```
