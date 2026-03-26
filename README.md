@@ -54,19 +54,16 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 - **Full DR takes hours** — restoring from GDrive means downloading the entire datastore; not a quick recovery
 - **Google Drive quota** — depending on the number of VMs/LXCs and their sizes, a rather large GDrive quota may be needed; the base usage mirrors your PBS datastore size, and retention keeping multiple snapshots adds on top of that
 
-  **Real-world example (this homelab):**
+  **Real-world examples:**
 
-  | Type | Count | Notes |
-  |---|---|---|
-  | VMs | 4 | 1× Windows VM, 1× macOS VM, 1× Linux VM, 1× Home Assistant OS |
-  | LXCs | 8 | mix of service containers (network, automation, databases, utilities) |
+  | Setup | VMs | LXCs | PBS on disk | GDrive actual (5 snapshots, deduplicated) |
+  |---|---|---|---|---|
+  | x86_64 homelab | 4 (Windows, macOS, Linux, HA OS) | 8 (services, automation, databases, utilities) | 275 GB | **~423 GiB** |
+  | Pi 5 remote node | 2 (HA OS, Linux) | — | 17 GB | **~17 GiB** |
 
-  | Storage | Usage |
-  |---|---|
-  | PBS on disk (`/mnt/pbs`) | 275 GB used |
-  | GDrive — actual disk usage (5 snapshots, deduplicated) | **~423 GiB** |
+  The Pi 5 node also illustrates why restic beats Home Assistant's built-in backup: HA's own backup creates a full archive every time with no incremental or deduplication. With restic, 5 full VM snapshots of ~16 GiB each land at only 17 GiB total on GDrive.
 
-  5 snapshots of ~300 GiB each would be ~1.5 TiB without deduplication — restic's cross-snapshot dedup brings the actual GDrive usage down to 423 GiB (~3.5× ratio). Still substantial; plan your quota accordingly.
+  For the x86_64 setup: 5 snapshots of ~300 GiB each would be ~1.5 TiB without deduplication — restic brings it down to 423 GiB (~3.5× ratio). Still substantial; plan your quota accordingly.
 
 ---
 
