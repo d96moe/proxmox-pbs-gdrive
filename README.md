@@ -39,31 +39,28 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 
 ## Pros and Cons
 
-**Pros:**
-- **Single machine** — no second server or NAS needed for offsite backups
-- **Real cloud backup** — Google Drive is genuinely offsite, survives fire/theft/flood alongside the hardware
-- **Full disaster recovery from anywhere** — as long as you have internet access and new hardware, you can recover completely
-- **Self-contained restore** — the config tarball carries credentials and PVE config, so disaster recovery requires no manual reclone/restic setup on the new machine
-- **PBS deduplication** — local backups are fast and space-efficient; only changed blocks are stored
-- **restic incremental backups** — after the first full upload, only the diff is sent to Google Drive; nightly backups are a fraction of the total datastore size
+| | |
+|---|---|
+| ✅ Single machine | No second server or NAS needed for offsite backups |
+| ✅ Real cloud backup | Google Drive is genuinely offsite — survives fire, theft, flood alongside the hardware |
+| ✅ Recover from anywhere | Internet access + new hardware = full recovery |
+| ✅ Self-contained restore | Config tarball carries credentials and PVE config — no manual rclone/restic setup on new hardware |
+| ✅ PBS deduplication | Local backups fast and space-efficient; only changed blocks stored |
+| ✅ restic incremental to GDrive | After first upload, only the diff is sent nightly |
+| ❌ No UI for GDrive backups | restic is CLI-only; no PVE interface for managing Google Drive snapshots *(separate hobby project underway to fix this)* |
+| ❌ No single-VM restore from GDrive | restic backs up the full PBS datastore as a unit — to recover one VM you must restore the entire datastore first |
+| ❌ First backup is slow | Initial upload is the full PBS datastore — can take many hours |
+| ❌ Full disaster recovery takes hours | Downloading the entire datastore from GDrive is not quick |
+| ❌ GDrive quota | Base usage mirrors PBS datastore size; retention keeping multiple snapshots adds on top |
 
-**Cons:**
-- **No UI for GDrive backups** — restic is entirely CLI-driven; there is no PVE interface for managing or monitoring Google Drive snapshots. *(A separate hobby project is underway to build a simple web UI to address this.)*
-- **Restoring a single VM from GDrive is not possible** — restic backs up the entire PBS datastore as a unit. If you only want to recover one VM from Google Drive, you still have to restore the full datastore (all VMs and LXCs) first, then restore the individual VM from PBS. There is no way to cherry-pick a single VM directly from GDrive.
-- **First backup is slow** — the initial restic upload is the full PBS datastore; can take many hours depending on size and connection speed
-- **Full disaster recovery takes hours** — restoring from GDrive means downloading the entire datastore; not a quick recovery
-- **Google Drive quota** — depending on the number of VMs/LXCs and their sizes, a rather large GDrive quota may be needed; the base usage mirrors your PBS datastore size, and retention keeping multiple snapshots adds on top of that
+**Real-world storage examples:**
 
-  **Real-world examples:**
+| Setup | VMs | LXCs | PBS on disk | GDrive actual (5 snapshots, deduplicated) |
+|---|---|---|---|---|
+| x86_64 homelab | 4 (Windows, macOS, Linux, HA OS) | 8 (services, automation, databases, utilities) | 275 GB | ~423 GiB |
+| Pi 5 remote node | 2 (HA OS, Linux) | — | 17 GB | ~17 GiB |
 
-  | Setup | VMs | LXCs | PBS on disk | GDrive actual (5 snapshots, deduplicated) |
-  |---|---|---|---|---|
-  | x86_64 homelab | 4 (Windows, macOS, Linux, HA OS) | 8 (services, automation, databases, utilities) | 275 GB | **~423 GiB** |
-  | Pi 5 remote node | 2 (HA OS, Linux) | — | 17 GB | **~17 GiB** |
-
-  The Pi 5 node also illustrates why restic beats Home Assistant's built-in backup: HA's own backup creates a full archive every time with no incremental or deduplication. With restic, 5 full VM snapshots of ~16 GiB each land at only 17 GiB total on GDrive.
-
-  For the x86_64 setup: 5 snapshots of ~300 GiB each would be ~1.5 TiB without deduplication — restic brings it down to 423 GiB (~3.5× ratio). Still substantial; plan your quota accordingly.
+The Pi 5 numbers also show why restic beats Home Assistant's built-in backup: HA's own backup creates a full archive every time with no incremental or deduplication. With restic, 5 full VM snapshots of ~16 GiB each land at only 17 GiB total on GDrive. For the x86_64 setup, 5 snapshots of ~300 GiB each would be ~1.5 TiB without deduplication — restic brings it down to 423 GiB (~3.5× ratio).
 
 ---
 
