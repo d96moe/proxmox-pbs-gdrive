@@ -95,7 +95,7 @@ backup-pve-config.sh (nightly at 04:00)
 | <img src="https://cdn.simpleicons.org/rclone" height="20"> rclone | 1.73.1 | 1.73.2 | [rclone.org](https://rclone.org/) |
 | <img src="https://restic.net/apple-touch-icon-144-precomposed.png" height="20"> restic | 0.18.0 | 0.18.0 | [restic.net](https://restic.net/) |
 | <img src="https://creativeprojects.github.io/resticprofile/images/logo.png" height="20"> resticprofile | — | — | [creativeprojects.github.io](https://creativeprojects.github.io/resticprofile/) |
-| <img src="https://www.debian.org/logos/openlogo-nd-100.png" height="20"> Debian (base) | Bookworm | Trixie | [debian.org](https://www.debian.org/) |
+| <img src="https://www.debian.org/logos/openlogo-nd-100.png" height="20"> Debian (base) | included via PVE installer | Trixie (manual install before PVE) | [debian.org](https://www.debian.org/) |
 | <img src="https://www.raspberrypi.com/app/uploads/2022/02/COLOUR-Raspberry-Pi-Symbol-Registered.png" height="20"> Hardware | Any x86_64 with NVMe | Pi 5 8GB + NVMe (tested via USB adapter) | [Raspberry Pi 5](https://www.raspberrypi.com/products/raspberry-pi-5/) |
 
 > ⚠️ pipbs and pxvirt are community projects, not officially supported by Proxmox. Keep their package versions in sync — mixing can cause GUI rendering issues.
