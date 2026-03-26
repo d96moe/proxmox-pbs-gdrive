@@ -23,6 +23,7 @@ Describe 'restore-1-install.sh: Install PBS and backup tools'
     It 'completes successfully'
         When run env CI=true bash "${SCRIPTS_DIR}/restore-1-install.sh"
         The status should be success
+        The output should include 'restore-1-install.sh COMPLETE'
     End
 
     It 'proxmox-backup-server is installed'
@@ -42,17 +43,17 @@ Describe 'restore-1-install.sh: Install PBS and backup tools'
 
     It 'restic is installed'
         When run which restic
-        The status should be success
+        The output should include 'restic'
     End
 
     It 'rclone is installed'
         When run which rclone
-        The status should be success
+        The output should include 'rclone'
     End
 
     It 'resticprofile is installed'
         When run which resticprofile
-        The status should be success
+        The output should include 'resticprofile'
     End
 
 End

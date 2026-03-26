@@ -24,6 +24,7 @@ Describe 'restore-1-install.sh: Install PBS and backup tools'
     It 'completes successfully'
         When run env CI=true bash "${SCRIPTS_DIR}/restore-1-install.sh"
         The status should be success
+        The output should include 'restore-1-install.sh COMPLETE'
     End
 
     It 'proxmox-backup-server is installed'
@@ -43,17 +44,17 @@ Describe 'restore-1-install.sh: Install PBS and backup tools'
 
     It 'restic is installed'
         When run which restic
-        The status should be success
+        The output should include 'restic'
     End
 
     It 'rclone is installed'
         When run which rclone
-        The status should be success
+        The output should include 'rclone'
     End
 
     It 'resticprofile is installed'
         When run which resticprofile
-        The status should be success
+        The output should include 'resticprofile'
     End
 
 End
@@ -65,6 +66,7 @@ Describe 'restore-2-auth.sh: Restore rclone config + PBS datastore from GDrive'
     It 'completes successfully'
         When run env CI=true bash "${SCRIPTS_DIR}/restore-2-auth.sh"
         The status should be success
+        The output should include 'restore-2-auth.sh COMPLETE'
     End
 
     It 'rclone.conf is present after restore'
@@ -74,7 +76,7 @@ Describe 'restore-2-auth.sh: Restore rclone config + PBS datastore from GDrive'
 
     It 'can access Google Drive after auth restore'
         When run bash -c "source ${SCRIPTS_DIR}/config.env && rclone lsd \"\${RESTICPROFILE_GDRIVE_REMOTE}:bu\" 2>/dev/null"
-        The status should be success
+        The output should be present
     End
 
     It 'PBS datastore is still mounted after restore'
@@ -91,11 +93,12 @@ Describe 'restore-3-pve.sh: Wire PBS storage into PVE'
     It 'completes successfully'
         When run env CI=true bash "${SCRIPTS_DIR}/restore-3-pve.sh"
         The status should be success
+        The output should include 'restore-3-pve.sh COMPLETE'
     End
 
     It 'PBS storage is registered in PVE'
         When run bash -c "source ${SCRIPTS_DIR}/config.env && pvesh get /storage/\"\${PVE_PBS_STORAGE_ID}\" 2>/dev/null"
-        The status should be success
+        The output should include 'pbs'
     End
 
     count_pbs_ct100_snapshots() {
