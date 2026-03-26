@@ -52,7 +52,7 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 - **Restoring a single VM from GDrive is not possible** — restic backs up the entire PBS datastore as a unit. If you only want to recover one VM from Google Drive, you still have to restore the full datastore (all VMs and LXCs) first, then restore the individual VM from PBS. There is no way to cherry-pick a single VM directly from GDrive.
 - **First backup is slow** — the initial restic upload is the full PBS datastore; can take many hours depending on size and connection speed
 - **Full DR takes hours** — restoring from GDrive means downloading the entire datastore; not a quick recovery
-- **Google Drive quota** — depending on the number of VMs/LXCs and their sizes, a rather large GDrive quota may be needed; the datastore grows with your VMs and restic retains multiple snapshots
+- **Google Drive quota** — depending on the number of VMs/LXCs and their sizes, a rather large GDrive quota may be needed; the base usage mirrors your PBS datastore size, and retention keeping multiple snapshots adds on top of that
 
 ---
 
