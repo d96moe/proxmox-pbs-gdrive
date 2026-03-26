@@ -1,5 +1,16 @@
 # CI & Testing
 
+## Contents
+
+- [Overview](#overview)
+- [How It Works](#how-it-works)
+- [Test Infrastructure](#test-infrastructure)
+- [What ShellSpec Tests Verify](#what-shellspec-tests-verify)
+- [Jenkins Setup](#jenkins-setup)
+- [Running ShellSpec Locally](#running-shellspec-locally)
+
+---
+
 Two Jenkins pipelines automatically verify the scripts end-to-end on real Proxmox VMs.
 
 ---
@@ -30,46 +41,43 @@ This separation is intentional: Jenkins shows you everything that happened; Shel
 
 ## Test Infrastructure
 
-### x86_64: Nested Proxmox inside a privileged LXC
-
-The x86_64 pipelines use **nested Proxmox** — a full PVE instance running inside a privileged LXC container on the host PVE node. This means the scripts run against a real `pvesh` / `pct` environment, not a mock.
+Both pipelines follow the same pattern: Jenkins clones a fresh VM from a template, runs the scripts against it via SSH, then destroys it after the build. Every build starts from a clean slate.
 
 ```
 Physical x86_64 host (PVE)
-    ├── LXC 200  — Jenkins agent (runs pipeline, issues pct exec commands)
-    └── LXC 199  — Nested PVE node under test (full Proxmox VE inside a privileged LXC)
-                        ├── PBS installed here by restore-1-install.sh
-                        ├── test LXC created and backed up here
-                        └── DR restore runs here (scenario B)
+    ├── LXC 200              — Jenkins agent (runs pipelines)
+    ├── VM (clone of 9001)   — x86_64 PVE node under test, fresh each build
+    │                              ├── PVE pre-installed in template
+    │                              ├── PBS installed by restore-1-install.sh
+    │                              ├── test LXC created and backed up
+    │                              └── destroyed after build
+    └── VM (clone of 9002)   — arm64 PVE node under test, fresh each build
+                                   ├── vanilla Debian arm64 (no PVE in template)
+                                   ├── Step 0: restore-1-install.sh installs pxvirt, reboots
+                                   ├── Step 1+: pipbs, rclone, restic installed
+                                   ├── test LXC created and backed up
+                                   └── destroyed after build
 ```
 
-LXC 199 is a **privileged** container with nesting enabled (`features: nesting=1`) — required for PVE and PBS to run inside it (systemd, cgroups, `/dev` access).
+Jenkins accesses both VMs via **SSH** — there is no `pct exec` involved.
 
-Jenkins (LXC 200) runs commands on LXC 199 via `pct exec 199 -- bash -c "..."` — no SSH into the nested node needed.
+### x86_64
+
+Clones template 9001 (Debian Bookworm x86_64, PVE pre-installed). The scripts run against a real `pvesh` / `pct` environment, not a mock.
 
 ### arm64: Fully emulated ARM64 VM on x86_64 host
 
-The arm64 pipelines do **not** run on real Pi 5 hardware. Instead, Jenkins clones a vanilla Debian arm64 VM template (template 9002) on the same x86_64 host and runs it under **full QEMU ARM64 emulation — no KVM acceleration**.
+Clones template 9002 (vanilla Debian Trixie arm64, no PVE). Runs under **full QEMU ARM64 emulation — no KVM acceleration**. No Pi 5 or separate arm64 hardware needed.
 
-```
-Physical x86_64 host (PVE)
-    ├── LXC 200         — Jenkins agent
-    └── VM (clone of 9002) — vanilla Debian arm64, fully QEMU-emulated
-                                ├── Step 0 of restore-1-install.sh installs pxvirt (arm64 PVE) and reboots
-                                ├── Step 1+ installs pipbs (arm64 PBS), rclone, restic
-                                ├── test LXC created and backed up here
-                                └── Jenkins accesses via SSH (not pct exec)
-```
-
-PVE itself is **installed by the script** (`restore-1-install.sh` Step 0 installs pxvirt and reboots) — the template starts as plain Debian with no PVE. This tests the full arm64 install path from scratch.
+PVE is **installed by the script** during the CI run (`restore-1-install.sh` Step 0 installs pxvirt and reboots) — this tests the full arm64 install path from scratch.
 
 Full QEMU emulation means arm64 pipelines run **3–5× slower** than x86_64.
 
 | Node | Role | Access method |
 |---|---|---|
 | LXC 200 | Jenkins agent, pipeline executor | — |
-| LXC 199 | Nested PVE under test (x86_64) | `pct exec 199` |
-| VM (clone of 9002) | Emulated arm64 PVE under test | SSH |
+| VM (clone of 9001) | x86_64 PVE node under test | SSH |
+| VM (clone of 9002) | arm64 PVE node under test (QEMU-emulated) | SSH |
 
 ---
 
