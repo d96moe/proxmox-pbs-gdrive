@@ -1,10 +1,14 @@
 // =============================================================================
-// Jenkinsfile.shellspec-arm64  —  Scenario A: Install + Backup (arm64 / Pi 5)
+// Jenkinsfile.shellspec-dr-arm64  —  Scenario B: DR Restore (arm64 / Pi 5)
 //
 // Template 9002 is vanilla Debian Trixie arm64 (no PVE, no PBS).
-// restore-1-install.sh is tested end-to-end:
+// Full DR scenario tested end-to-end:
 //   Step 0: installs pxvirt (PVE), configures bridge, reboots
 //   Step 1+: installs PBS (pipbs), rclone, restic, resticprofile
+//   Then: restores PBS datastore from GDrive, restores LXC from PBS
+//
+// Prerequisite: proxmox-ci-backup-arm64 must have run at least once to
+// populate bu/ci-restore-test-arm64 in Google Drive.
 //
 // NOTE: arm64 is fully emulated (no KVM), expect 3-5x longer build times.
 // =============================================================================
@@ -18,7 +22,7 @@ pipeline {
     }
 
     triggers {
-        cron('H 22 * * *')
+        cron('H 23 * * 0')
     }
 
     environment {
@@ -116,7 +120,7 @@ ENDSSH
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH' || true
 set -euo pipefail
 cd ${SCRIPTS_DIR}
-cp config_ci_arm64.env config.env
+cp config/config_ci_arm64.env config.env
 CI=true ROOT_PASSWORD="ci-arm64-root" bash restore-1-install.sh
 ENDSSH
                 """
@@ -177,125 +181,96 @@ ENDSSH
             }
         }
 
-        stage('Create test LXC') {
+        stage('Stage local config tar (simulate manual DR)') {
             steps {
-                echo "Creating minimal arm64 LXC (ID 100) as backup target..."
+                echo "Downloading arm64 config tar to /tmp/ then removing rclone.conf..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
+source ${SCRIPTS_DIR}/config.env
+GDRIVE_CONFIG_PATH="\${RESTICPROFILE_GDRIVE_REMOTE}:bu/\${GDRIVE_CONFIG_FOLDER}"
+LATEST=\$(rclone lsf "\${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1)
+[ -z "\${LATEST}" ] && { echo "ERROR: no config backup found at \${GDRIVE_CONFIG_PATH}"; exit 1; }
+echo "Downloading \${LATEST} to /tmp/..."
+rclone copy "\${GDRIVE_CONFIG_PATH}/\${LATEST}" /tmp/
+echo "Removing rclone.conf to simulate fresh install..."
+rm -f /root/.config/rclone/rclone.conf
+echo "Staged: /tmp/\${LATEST}"
+ENDSSH
+                """
+            }
+        }
 
-# Ensure vmbr0 bridge exists
+        stage('Restore from GDrive (restore-2-auth.sh)') {
+            steps {
+                echo "Restoring PBS datastore from Google Drive..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+CI=true bash restore-2-auth.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Configure PVE (restore-3-pve.sh)') {
+            steps {
+                echo "Wiring PBS storage into PVE, enabling schedules..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+CI=true bash restore-3-pve.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Restore LXC from PBS') {
+            steps {
+                echo "Restoring LXC 100 from PBS — full DR end-to-end..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+# Create vmbr0 bridge if missing (needed for LXC network config)
 if ! ip link show vmbr0 &>/dev/null; then
     ip link add name vmbr0 type bridge 2>/dev/null || true
     ip link set vmbr0 up
 fi
-
-# Download native arm64 Debian template from linuxcontainers.org
-TMPL_DIR="/var/lib/vz/template/cache"
-TMPL_NAME="debian-12-standard_arm64.tar.xz"
-if [ ! -f "\${TMPL_DIR}/\${TMPL_NAME}" ]; then
-    BASE="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
-    LATEST=\$(curl -sL "\${BASE}/" | grep -oE '[0-9]{8}_[0-9]{2}:[0-9]{2}' | sort -r | head -1)
-    [ -z "\${LATEST}" ] && { echo "ERROR: could not list arm64 templates from linuxcontainers.org"; exit 1; }
-    echo "Downloading arm64 template build \${LATEST}..."
-    curl -fsSL "\${BASE}/\${LATEST}/rootfs.tar.xz" -o "\${TMPL_DIR}/\${TMPL_NAME}"
-fi
-
-pct create 100 "\${TMPL_DIR}/\${TMPL_NAME}" \
-    --arch arm64 \
-    --ostype unmanaged \
-    --hostname ci-test-lxc \
-    --memory 64 \
-    --rootfs local:1 \
-    --unprivileged 1
-
-# Disable seccomp/apparmor — QEMU arm64 emulation blocks some syscalls
-sed -i '/^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
-echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
-
-pct start 100
-sleep 5
-echo "Test LXC 100 created and started"
-pct status 100
-ENDSSH
-                """
-            }
-        }
-
-        stage('PBS backup') {
-            steps {
-                echo "Taking PBS backup of test LXC 100 -> pbs-ci storage..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-source /opt/proxmox-restore/config.env
-
-FINGERPRINT=\$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (sha256):" | awk '{print \$NF}')
-pvesh create /storage \
-    --storage "\${PVE_PBS_STORAGE_ID}" \
-    --type pbs \
-    --server "\${PVE_PBS_SERVER}" \
-    --datastore "\${PBS_DATASTORE_NAME}" \
-    --username "\${PBS_USER}" \
-    --password "\${PBS_USER_PASSWORD}" \
-    --fingerprint "\${FINGERPRINT}" \
-    --content backup \
-    --prune-backups "\${PBS_RETENTION_LOCAL}" || true
-
 systemctl is-active --quiet pvedaemon || systemctl start pvedaemon pveproxy pvestatd
 sleep 3
 
-vzdump 100 --storage "\${PVE_PBS_STORAGE_ID}" --mode snapshot --compress zstd
-echo "PBS backup complete"
+SNAP=\$(pvesh get /nodes/\$(hostname)/storage/pbs-ci/content --output-format json 2>/dev/null \
+    | python3 -c "
+import json, sys
+items = json.load(sys.stdin)
+ct = [x for x in items if x.get('vmid') == 100]
+if not ct:
+    raise SystemExit('ERROR: no backup for CT 100 in pbs-ci')
+ct.sort(key=lambda x: x.get('ctime', 0))
+print(ct[-1]['volid'])
+")
+echo "Restoring from: \${SNAP}"
+rm -f /etc/pve/lxc/100.conf
+pct restore 100 "\${SNAP}" --storage local
+# Disable seccomp/apparmor — QEMU arm64 emulation blocks some syscalls
+sed -i '/^net/d; /^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
+echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
+pct start 100
+sleep 5
 ENDSSH
                 """
             }
         }
 
-        stage('Backup PVE config to GDrive') {
-            steps {
-                echo "Backing up PVE host config to Google Drive..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-/usr/local/bin/backup-pve-config.sh
-ENDSSH
-                """
-            }
-        }
-
-        stage('Restic backup to GDrive') {
-            steps {
-                echo "Backing up PBS datastore to Google Drive via resticprofile..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-/usr/local/bin/stop-proxmox-backup.sh
-
-resticprofile \
-    -c /etc/resticprofile/profiles.yaml \
-    -n pbs-backup \
-    init 2>/dev/null || true
-
-resticprofile \
-    -c /etc/resticprofile/profiles.yaml \
-    -n pbs-backup \
-    backup
-
-systemctl start proxmox-backup proxmox-backup-proxy
-echo "Restic backup to GDrive complete"
-ENDSSH
-                """
-            }
-        }
-
-        stage('Run ShellSpec (Scenario A / arm64)') {
+        stage('Run ShellSpec (Scenario B / arm64)') {
             steps {
                 echo "Running ShellSpec integration tests..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} \
-                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_a_spec.sh' \
-                        > shellspec-a-arm64.xml
+                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_b_spec.sh' \
+                        > shellspec-b-arm64.xml
                 """
             }
         }
@@ -307,15 +282,6 @@ ENDSSH
             junit allowEmptyResults: true, testResults: 'shellspec-*-arm64.xml'
 
             echo "=== Cleanup ==="
-
-            sh """
-                ssh ${SSH_OPTS} root@${VM_IP} \
-                    "restic -r ${GDRIVE_REPO} \
-                            --password-file ${RESTIC_PW} \
-                            forget --keep-last 1 --prune" \
-                    || true
-            """
-
             sh """
                 ssh ${SSH_OPTS} root@${PVE_HOST} \
                     "qm stop ${VM_ID} 2>/dev/null || true; sleep 5; qm destroy ${VM_ID} --purge 1" \
@@ -324,10 +290,10 @@ ENDSSH
             echo "VM ${VM_ID} destroyed"
         }
         success {
-            echo "ShellSpec arm64 pipeline PASSED — Scenario A verified on aarch64"
+            echo "ShellSpec arm64 DR pipeline PASSED — Scenario B verified on aarch64"
         }
         failure {
-            echo "ShellSpec arm64 pipeline FAILED — check logs above"
+            echo "ShellSpec arm64 DR pipeline FAILED — check logs above"
         }
     }
 }

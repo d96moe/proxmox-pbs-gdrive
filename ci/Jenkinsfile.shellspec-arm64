@@ -1,12 +1,12 @@
 // =============================================================================
-// Jenkinsfile.shellspec  —  Scenario A: Install + Backup CI Pipeline (ShellSpec)
+// Jenkinsfile.shellspec-arm64  —  Scenario A: Install + Backup (arm64 / Pi 5)
 //
-// Drop-in replacement for Jenkinsfile.restore-test.
-// Identical setup stages; replaces the inline "Verify GDrive snapshot"
-// assertion with a ShellSpec run that produces a JUnit XML report.
+// Template 9002 is vanilla Debian Trixie arm64 (no PVE, no PBS).
+// restore-1-install.sh is tested end-to-end:
+//   Step 0: installs pxvirt (PVE), configures bridge, reboots
+//   Step 1+: installs PBS (pipbs), rclone, restic, resticprofile
 //
-// Plan: once ShellSpec tests are proven stable, delete proxmox-restore-test
-// and promote this job as the primary Scenario A pipeline.
+// NOTE: arm64 is fully emulated (no KVM), expect 3-5x longer build times.
 // =============================================================================
 
 pipeline {
@@ -18,17 +18,16 @@ pipeline {
     }
 
     triggers {
-        cron('H 3 * * *')
+        cron('H 22 * * *')
     }
 
     environment {
         VM_ID         = "9${String.format('%02d', (env.BUILD_NUMBER.toInteger() % 100) + 50)}"
-        VM_IP         = "192.168.0.251"
+        VM_IP         = "192.168.0.252"
         PVE_HOST      = "192.168.0.200"
-        SSH_KEY       = "/var/lib/jenkins/.ssh/id_ed25519"
         SSH_OPTS      = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
         SCRIPTS_DIR   = "/opt/proxmox-restore"
-        GDRIVE_REPO   = "rclone:gdrive:bu/ci-restore-test"
+        GDRIVE_REPO   = "rclone:gdrive:bu/ci-restore-test-arm64"
         RESTIC_PW     = "/etc/resticprofile/restic-password"
     }
 
@@ -36,10 +35,12 @@ pipeline {
 
         stage('Clone VM') {
             steps {
-                echo "Cloning template 9001 -> VM ${VM_ID} (${env.BUILD_TAG})"
+                echo "Cloning arm64 template 9002 -> VM ${VM_ID} (${env.BUILD_TAG})"
                 sh """
                     ssh ${SSH_OPTS} root@${PVE_HOST} \
-                        "qm clone 9001 ${VM_ID} --name restore-ci --full 1"
+                        "qm clone 9002 ${VM_ID} --name restore-ci-arm64 --full 1"
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "qm resize ${VM_ID} scsi0 32G"
                 """
             }
         }
@@ -47,39 +48,30 @@ pipeline {
         stage('Start VM + wait for SSH') {
             steps {
                 sh "ssh ${SSH_OPTS} root@${PVE_HOST} 'qm start ${VM_ID}'"
-                echo "Waiting for SSH at ${VM_IP} (max 150s)..."
+                echo "Waiting for SSH at ${VM_IP} (vanilla Debian — max 300s)..."
                 sh """
-                    for i in \$(seq 1 30); do
+                    for i in \$(seq 1 60); do
                         ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH ready" && exit 0
-                        echo "  attempt \$i/30..."
+                        echo "  attempt \$i/60..."
                         sleep 5
                     done
-                    echo "ERROR: VM did not become reachable within 150 seconds"
+                    echo "ERROR: VM did not become reachable within 300 seconds"
                     exit 1
-                """
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-grep -E '^192\\.168\\.0\\.251.*restore-ci' /etc/hosts || echo '192.168.0.251 restore-ci.local restore-ci' >> /etc/hosts
-systemctl reset-failed pve-cluster 2>/dev/null || true
-systemctl restart pve-cluster
-echo "pve-cluster started, waiting 5s..."
-sleep 5
-systemctl is-active pve-cluster && echo "pve-cluster: OK" || { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
-ENDSSH
                 """
             }
         }
 
         stage('Prepare disk') {
             steps {
-                echo "Formatting /dev/sdb (PBS partition) with ext4..."
+                echo "Formatting PBS data disk with ext4..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-systemctl stop mnt-pbs.mount 2>/dev/null || true
-umount -f /mnt/pbs 2>/dev/null || true
-umount -f /dev/sdb 2>/dev/null || true
-sleep 1
-mkfs.ext4 -F -F -m 0 /dev/sdb
+udevadm settle
+ROOT_DISK=\$(lsblk -ndo PKNAME \$(findmnt -n -o SOURCE /) 2>/dev/null | head -1)
+DATA_DISK=\$(lsblk -nd -o NAME | grep -v "^\${ROOT_DISK}\$" | head -1)
+echo "Root disk: /dev/\${ROOT_DISK}  Data disk: /dev/\${DATA_DISK}"
+[ -z "\${DATA_DISK}" ] && { echo "ERROR: data disk not found"; lsblk; exit 1; }
+mkfs.ext4 -F -F -m 0 /dev/\${DATA_DISK}
 ENDSSH
                 """
             }
@@ -117,14 +109,54 @@ ENDSSH
             }
         }
 
-        stage('Install tools') {
+        stage('Install PVE (restore-1-install.sh Step 0)') {
             steps {
-                echo "Installing PBS, rclone, restic, resticprofile on CI VM..."
+                echo "Running restore-1-install.sh — Step 0 installs pxvirt and reboots..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH' || true
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+cp config/config_ci_arm64.env config.env
+CI=true ROOT_PASSWORD="ci-arm64-root" bash restore-1-install.sh
+ENDSSH
+                """
+                echo "VM is rebooting after pxvirt install. Waiting for SSH (max 150s)..."
+                sh """
+                    sleep 30
+                    for i in \$(seq 1 24); do
+                        ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH ready after reboot" && exit 0
+                        echo "  attempt \$i/24..."
+                        sleep 5
+                    done
+                    echo "ERROR: VM did not come back within 150 seconds"
+                    exit 1
+                """
+            }
+        }
+
+        stage('Fix pve-cluster after reboot') {
+            steps {
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+command -v pvesh &>/dev/null || { echo "ERROR: pvesh not found — pxvirt install failed in Step 0"; exit 1; }
+HOSTNAME=\$(hostname)
+grep -qF "192.168.0.252 \${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
+systemctl reset-failed pve-cluster 2>/dev/null || true
+systemctl restart pve-cluster
+sleep 5
+systemctl is-active pve-cluster && echo "pve-cluster: OK" || { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
+ENDSSH
+                """
+            }
+        }
+
+        stage('Install tools (restore-1-install.sh Step 1+)') {
+            steps {
+                echo "Installing PBS (pipbs), rclone, restic, resticprofile..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
 cd ${SCRIPTS_DIR}
-cp config_ci.env config.env
 CI=true bash restore-1-install.sh
 ENDSSH
                 """
@@ -133,10 +165,11 @@ ENDSSH
 
         stage('Install ShellSpec') {
             steps {
-                echo "Installing ShellSpec on CI VM..."
+                echo "Installing ShellSpec on arm64 CI VM..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
+apt-get install -y -q git
 curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix /usr/local
 shellspec --version
 ENDSSH
@@ -146,31 +179,42 @@ ENDSSH
 
         stage('Create test LXC') {
             steps {
-                echo "Creating minimal Debian 12 LXC (ID 100) as backup target..."
+                echo "Creating minimal arm64 LXC (ID 100) as backup target..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
 
-pveam update
+# Ensure vmbr0 bridge exists
+if ! ip link show vmbr0 &>/dev/null; then
+    ip link add name vmbr0 type bridge 2>/dev/null || true
+    ip link set vmbr0 up
+fi
 
-DEBIAN12_TMPL=\$(pveam available --section system 2>/dev/null \
-    | awk '/debian-12-standard/ {print \$2}' | sort -V | tail -1)
-[ -z "\${DEBIAN12_TMPL}" ] && DEBIAN12_TMPL="debian-12-standard_12.12-1_amd64.tar.zst"
+# Download native arm64 Debian template from linuxcontainers.org
+TMPL_DIR="/var/lib/vz/template/cache"
+TMPL_NAME="debian-12-standard_arm64.tar.xz"
+if [ ! -f "\${TMPL_DIR}/\${TMPL_NAME}" ]; then
+    BASE="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
+    LATEST=\$(curl -sL "\${BASE}/" | grep -oE '[0-9]{8}_[0-9]{2}:[0-9]{2}' | sort -r | head -1)
+    [ -z "\${LATEST}" ] && { echo "ERROR: could not list arm64 templates from linuxcontainers.org"; exit 1; }
+    echo "Downloading arm64 template build \${LATEST}..."
+    curl -fsSL "\${BASE}/\${LATEST}/rootfs.tar.xz" -o "\${TMPL_DIR}/\${TMPL_NAME}"
+fi
 
-pveam download local "\${DEBIAN12_TMPL}"
-
-LOCAL_TMPL=\$(pveam list local 2>/dev/null \
-    | awk '/debian-12-standard/ {print \$1}' | sort -V | tail -1)
-[ -z "\${LOCAL_TMPL}" ] && { echo "ERROR: no debian-12 template in local"; exit 1; }
-
-pct create 100 "\${LOCAL_TMPL}" \
+pct create 100 "\${TMPL_DIR}/\${TMPL_NAME}" \
+    --arch arm64 \
+    --ostype unmanaged \
     --hostname ci-test-lxc \
     --memory 64 \
     --rootfs local:1 \
-    --net0 name=eth0,bridge=vmbr0,ip=10.10.0.50/24,gw=10.10.0.1 \
-    --unprivileged 1 \
-    --start 1
+    --unprivileged 1
 
+# Disable seccomp/apparmor — QEMU arm64 emulation blocks some syscalls
+sed -i '/^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
+echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
+
+pct start 100
+sleep 5
 echo "Test LXC 100 created and started"
 pct status 100
 ENDSSH
@@ -231,6 +275,11 @@ set -euo pipefail
 resticprofile \
     -c /etc/resticprofile/profiles.yaml \
     -n pbs-backup \
+    init 2>/dev/null || true
+
+resticprofile \
+    -c /etc/resticprofile/profiles.yaml \
+    -n pbs-backup \
     backup
 
 systemctl start proxmox-backup proxmox-backup-proxy
@@ -240,13 +289,13 @@ ENDSSH
             }
         }
 
-        stage('Run ShellSpec (Scenario A)') {
+        stage('Run ShellSpec (Scenario A / arm64)') {
             steps {
                 echo "Running ShellSpec integration tests..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} \
                         'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_a_spec.sh' \
-                        > shellspec-a.xml
+                        > shellspec-a-arm64.xml
                 """
             }
         }
@@ -255,11 +304,10 @@ ENDSSH
 
     post {
         always {
-            junit allowEmptyResults: true, testResults: 'shellspec-*.xml'
+            junit allowEmptyResults: true, testResults: 'shellspec-*-arm64.xml'
 
             echo "=== Cleanup ==="
 
-            // Prune old GDrive test snapshots (keep last 1 to allow DR pipeline to run)
             sh """
                 ssh ${SSH_OPTS} root@${VM_IP} \
                     "restic -r ${GDRIVE_REPO} \
@@ -268,7 +316,6 @@ ENDSSH
                     || true
             """
 
-            // Destroy the cloned VM
             sh """
                 ssh ${SSH_OPTS} root@${PVE_HOST} \
                     "qm stop ${VM_ID} 2>/dev/null || true; sleep 5; qm destroy ${VM_ID} --purge 1" \
@@ -277,10 +324,10 @@ ENDSSH
             echo "VM ${VM_ID} destroyed"
         }
         success {
-            echo "ShellSpec pipeline PASSED"
+            echo "ShellSpec arm64 pipeline PASSED — Scenario A verified on aarch64"
         }
         failure {
-            echo "ShellSpec pipeline FAILED — check logs above"
+            echo "ShellSpec arm64 pipeline FAILED — check logs above"
         }
     }
 }
