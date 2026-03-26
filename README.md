@@ -6,6 +6,14 @@
 
 ## Why This Exists
 
+### The use case
+
+The specific setup this was built for: a small remote location with minimal IT infrastructure. The requirements were to run **Home Assistant** for home automation and a full **Unifi OS** instance for network management — specifically to get site-to-site VPN ("site magic"), which is not supported by the Unifi Network add-on in Home Assistant and requires a proper Unifi OS server.
+
+A Raspberry Pi 5 running Proxmox VE covers both: HA and Unifi OS each get their own LXC/VM on a single small, low-power device. No rack, no noise, no separate hardware per service.
+
+### The backup problem
+
 If you run a homelab Proxmox node and want proper offsite backups — but you only have one physical machine — you have a problem: there's nowhere local to send backups that isn't at risk alongside the hardware itself.
 
 This repo solves that by pairing Proxmox Backup Server (PBS) with Google Drive as the offsite destination:
