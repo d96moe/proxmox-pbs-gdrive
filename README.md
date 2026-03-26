@@ -6,6 +6,25 @@
 >
 > A real-world disaster recovery using this setup has never actually been performed. To compensate for that, a fairly advanced automated test environment has been implemented: Jenkins pipelines run both the full backup scenario and a complete end-to-end disaster recovery restore on a nested virtualized Proxmox instance, with ShellSpec integration tests verifying the end state. It's as close to the real thing as you can get without actually pulling the plug — but it's still not the same as having done it for real.
 
+## Contents
+
+- [Why This Exists](#why-this-exists)
+- [What You Get](#what-you-get)
+- [Pros and Cons](#pros-and-cons)
+- [How It Works](#how-it-works)
+- [Supported Platforms](#supported-platforms)
+- [Which Scenario Applies to You?](#which-scenario-applies-to-you)
+- [Before You Start](#before-you-start)
+- [Scenario A: Fresh Setup](#scenario-a-fresh-setup)
+- [Scenario B: Disaster Recovery](#scenario-b-disaster-recovery)
+- [Backup Schedule and Retention](#backup-schedule-and-retention)
+- [Verify Backup Health](#verify-backup-health)
+- [Troubleshooting](#troubleshooting)
+- [Notes](#notes)
+- [CI & Testing](#ci--testing)
+
+---
+
 ## Why This Exists
 
 If you run a homelab Proxmox node and want proper offsite backups — but you only have one physical machine — you have a problem: there's nowhere local to send backups that isn't at risk alongside the hardware itself.
