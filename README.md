@@ -88,18 +88,15 @@ backup-pve-config.sh (nightly at 04:00)
 
 ## Supported Platforms
 
-| Component | x86_64 standard | Raspberry Pi 5 (aarch64) |
-|---|---|---|
-| Proxmox VE | 9.1.4 | 9.0.10-2 (pxvirt) |
-| PBS | 4.1.4-1 (official) | 4.1.4-1 (pipbs) |
-| rclone | 1.73.1 | 1.73.2 |
-| restic | 0.18.0 | 0.18.0 |
-| Debian (base) | Bookworm | Trixie |
-| Hardware | Any x86_64 with NVMe | Pi 5 8GB + NVMe (tested via USB adapter) |
-
-**ARM64 community repos used on Pi 5:**
-- PBS: [pipbs](https://github.com/dexogen/pipbs) (dexogen)
-- QEMU/KVM: [pxvirt](https://download.lierfang.com/pxcloud/pxvirt) (lierfang)
+| Component | x86_64 standard | Raspberry Pi 5 (aarch64) | Links |
+|---|---|---|---|
+| Proxmox VE | 9.1.4 | 9.0.10-2 (pxvirt) | [proxmox.com](https://www.proxmox.com/en/proxmox-virtual-environment) · [pxvirt (arm64)](https://download.lierfang.com/pxcloud/pxvirt) |
+| PBS | 4.1.4-1 (official) | 4.1.4-1 (pipbs) | [proxmox.com](https://www.proxmox.com/en/proxmox-backup-server) · [pipbs (arm64)](https://github.com/dexogen/pipbs) |
+| rclone | 1.73.1 | 1.73.2 | [rclone.org](https://rclone.org/) |
+| restic | 0.18.0 | 0.18.0 | [restic.net](https://restic.net/) |
+| resticprofile | — | — | [creativeprojects.github.io](https://creativeprojects.github.io/resticprofile/) |
+| Debian (base) | Bookworm | Trixie | [debian.org](https://www.debian.org/) |
+| Hardware | Any x86_64 with NVMe | Pi 5 8GB + NVMe (tested via USB adapter) | [Raspberry Pi 5](https://www.raspberrypi.com/products/raspberry-pi-5/) |
 
 > ⚠️ pipbs and pxvirt are community projects, not officially supported by Proxmox. Keep their package versions in sync — mixing can cause GUI rendering issues.
 
