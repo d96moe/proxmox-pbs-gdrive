@@ -115,15 +115,14 @@ After the full DR restore pipeline:
 **Infrastructure:**
 - Jenkins running (in this setup: LXC 200 on the x86_64 PVE node)
 - Jenkins Pipeline plugin installed
-- A **test node** (LXC 199) that Jenkins can reach via SSH — this is the Proxmox node the scripts run against. It must have a dedicated PBS partition available before the pipelines run.
-- For ARM64 pipelines: the arm64 template VM (9002) must exist on the x86_64 PVE host — run `ci/setup-arm64-template.sh` once to create it (see [ARM64 Template Setup](#arm64-template-setup)). No Pi 5 or separate arm64 hardware needed.
+- The x86_64 PVE host must have template VM 9001 — run `ci/setup-x86-template.sh` once to create it
+- The x86_64 PVE host must have template VM 9002 — run `ci/setup-arm64-template.sh` once to create it. No Pi 5 or separate arm64 hardware needed.
+
+The test VMs are **created by Jenkins** from these templates at the start of each build and destroyed afterwards. No persistent test node to maintain.
 
 **Jenkins credentials** (configure in Jenkins → Manage Credentials):
-- SSH private key for `root` on the test node — used by the Jenkinsfiles to exec commands via `pct exec`
-
-**On the test node (LXC 199):**
-- ShellSpec installed: `bash <(curl -fsSL https://git.io/shellspec) --yes`
-- The repo cloned at a known path (the Jenkinsfiles handle this via `git clone` or workspace checkout)
+- SSH private key for `root` on the PVE host — used to clone/start/destroy VMs via `qm`
+- SSH private key for `root` on the test VM — used to run scripts inside the cloned VM
 
 **CI config files (`ci/config_ci.env`, `ci/config_ci_arm64.env`):**
 
