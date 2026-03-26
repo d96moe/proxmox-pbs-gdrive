@@ -116,7 +116,7 @@ ENDSSH
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH' || true
 set -euo pipefail
 cd ${SCRIPTS_DIR}
-cp config/config_ci_arm64.env config.env
+cp ci/config_ci_arm64.env config.env
 CI=true ROOT_PASSWORD="ci-arm64-root" bash restore-1-install.sh
 ENDSSH
                 """
