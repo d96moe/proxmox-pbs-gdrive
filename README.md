@@ -3,6 +3,8 @@
 > **⚠️ HOBBY PROJECT — USE AT YOUR OWN RISK**
 >
 > This is a personal homelab project built for two reasons: to have a reasonable backup safety net at home, and to have fun exploring what Claude Code can do as a coding assistant. The scripts, the CI pipelines, the tests, and yes — this README — were all written with Claude Code assistance. It is not production software, has no guarantees, and comes with no support. The scripts work on my hardware — they may or may not work on yours. If you use this and lose data, that's on you.
+>
+> A real-world disaster recovery using this setup has never actually been performed. To compensate for that, a fairly advanced automated test environment has been implemented: Jenkins pipelines run both the full backup scenario and a complete end-to-end DR restore on a nested virtualized Proxmox instance, with ShellSpec integration tests verifying the end state. It's as close to the real thing as you can get without actually pulling the plug — but it's still not the same as having done it for real.
 
 ## Why This Exists
 
