@@ -149,7 +149,13 @@ EOF
     echo "deb https://download.lierfang.com/pxcloud/pxvirt trixie main" \
         > /etc/apt/sources.list.d/pxvirt.list
     apt_get update
-    apt_get install -y proxmox-ve pve-qemu-kvm
+    for _attempt in 1 2 3; do
+        apt_get install -y proxmox-ve pve-qemu-kvm && break
+        echo "  pxvirt install attempt ${_attempt}/3 failed, retrying in 15s..."
+        sleep 15
+        apt_get update -qq
+    done
+    command -v pvesh &>/dev/null || { echo "ERROR: proxmox-ve install failed after 3 attempts"; exit 1; }
 
     # Remove enterprise repos (require subscription, cause 401)
     rm -f /etc/apt/sources.list.d/*enterprise*
