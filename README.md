@@ -94,24 +94,22 @@ Before running any scripts, make sure you have:
 
 ### 1. Create a dedicated PBS partition
 
-PBS **must** have its own dedicated partition — it cannot share space with the OS or VMs.
+PBS should have its own dedicated partition. It can technically run on a shared partition, but it's strongly discouraged: if anything else (OS, VMs, logs) fills the disk, PBS backups fail. Keeping it separate also makes it easy to see exactly how much space backups are consuming.
 
-**Why:** PBS manages its own chunk store and assumes exclusive, predictable disk access. Sharing a partition risks running out of inodes or disk space and corrupting backups.
-
-**Minimum size:** 15% of total disk. In practice, 20–30% is recommended.
+**Size:** depends entirely on how many VMs/LXCs you have and how large they are. PBS deduplicates aggressively so the datastore is often much smaller than the sum of your VM sizes — but leave headroom.
 
 Create and format the partition before running any scripts:
 
 ```bash
 # Example: create partition on /dev/sda
 parted /dev/sda mkpart primary ext4 <start>s <end>s
-mkfs.ext4 -m 0 /dev/sda3       # -m 0: no reserved blocks (PBS manages space itself)
+mkfs.ext4 -m 0 /dev/sda3   # -m 0: no reserved blocks (only useful on root partition)
 
 # Get UUID for config.env
 blkid /dev/sda3
 ```
 
-> ⚠️ Format with default inode ratio — do NOT use `-T largefile4`. PBS creates millions of small chunk files and will run out of inodes if formatted for large files.
+> ⚠️ Format with the **default inode ratio** — do NOT use `-T largefile4`. PBS stores data as millions of small 64 KB chunk files. `largefile4` sets 4 MB per inode, leaving far too few inodes for the chunk store.
 
 `restore-1-install.sh` will verify the partition, mount it, and add it to `/etc/fstab` automatically.
 
