@@ -1,0 +1,2 @@
+# Active config — contains real passwords and paths, never commit
+config.env
