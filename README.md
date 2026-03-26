@@ -10,7 +10,7 @@
 
 If you run a homelab Proxmox node and want proper offsite backups — but you only have one physical machine — you have a problem: there's nowhere local to send backups that isn't at risk alongside the hardware itself.
 
-This repo solves that by pairing Proxmox Backup Server (PBS) with Google Drive as the offsite destination:
+This repo solves that by pairing [Proxmox Backup Server (PBS)](https://www.proxmox.com/en/proxmox-backup-server) with Google Drive as the offsite destination:
 
 - **PBS** handles fast, incremental, deduplicated VM/LXC snapshots locally
 - **restic + rclone** push the full PBS datastore to Google Drive nightly
@@ -77,8 +77,9 @@ backup-pve-config.sh (nightly at 04:00)
             └── this tarball is what makes Scenario B self-contained
 ```
 
-- **PBS** stores incremental, deduplicated VM/LXC snapshots locally on `/mnt/pbs`
-- **restic** snapshots the full PBS datastore to Google Drive nightly (PBS is stopped during snapshot for consistency)
+- **[Proxmox Backup Server (PBS)](https://www.proxmox.com/en/proxmox-backup-server)** stores incremental, deduplicated VM/LXC snapshots locally on `/mnt/pbs`
+- **[restic](https://restic.net/)** snapshots the full PBS datastore to Google Drive nightly via **[rclone](https://rclone.org/)** (PBS is stopped during snapshot for consistency)
+- **[resticprofile](https://creativeprojects.github.io/resticprofile/)** manages the restic schedule, retention config, and forget rules
 - **config tarball** backs up everything needed to recover on new hardware: PVE cluster database, rclone OAuth token, restic password, network config
 
 > The config tarball is what makes disaster recovery hands-free — it contains the credentials to reach Google Drive and the password to decrypt backups. No manual rclone/restic reconfiguration needed on new hardware.
