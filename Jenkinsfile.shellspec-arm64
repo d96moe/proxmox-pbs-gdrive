@@ -163,38 +163,6 @@ ENDSSH
             }
         }
 
-        stage('Create test LXC') {
-            steps {
-                echo "Creating minimal arm64 LXC (ID 100) as backup target..."
-                sh """
-                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-set -euo pipefail
-if ! ip link show vmbr0 &>/dev/null; then
-    ip link add name vmbr0 type bridge 2>/dev/null || true
-    ip link set vmbr0 up
-fi
-TMPL_DIR="/var/lib/vz/template/cache"
-TMPL_NAME="debian-12-standard_arm64.tar.xz"
-if [ ! -f "\${TMPL_DIR}/\${TMPL_NAME}" ]; then
-    BASE="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
-    LATEST=\$(curl -sL "\${BASE}/" | grep -oE '[0-9]{8}_[0-9]{2}:[0-9]{2}' | sort -r | head -1)
-    [ -z "\${LATEST}" ] && { echo "ERROR: could not list arm64 templates"; exit 1; }
-    curl -fsSL "\${BASE}/\${LATEST}/rootfs.tar.xz" -o "\${TMPL_DIR}/\${TMPL_NAME}"
-fi
-pct create 100 "\${TMPL_DIR}/\${TMPL_NAME}" \
-    --arch arm64 --ostype unmanaged \
-    --hostname ci-test-lxc --memory 64 \
-    --rootfs local:1 --unprivileged 1
-sed -i '/^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
-echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
-pct start 100
-sleep 5
-pct status 100
-ENDSSH
-                """
-            }
-        }
-
         stage('Install ShellSpec') {
             steps {
                 echo "Installing ShellSpec on arm64 CI VM..."
@@ -209,12 +177,125 @@ ENDSSH
             }
         }
 
+        stage('Create test LXC') {
+            steps {
+                echo "Creating minimal arm64 LXC (ID 100) as backup target..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+
+# Ensure vmbr0 bridge exists
+if ! ip link show vmbr0 &>/dev/null; then
+    ip link add name vmbr0 type bridge 2>/dev/null || true
+    ip link set vmbr0 up
+fi
+
+# Download native arm64 Debian template from linuxcontainers.org
+TMPL_DIR="/var/lib/vz/template/cache"
+TMPL_NAME="debian-12-standard_arm64.tar.xz"
+if [ ! -f "\${TMPL_DIR}/\${TMPL_NAME}" ]; then
+    BASE="https://images.linuxcontainers.org/images/debian/bookworm/arm64/default"
+    LATEST=\$(curl -sL "\${BASE}/" | grep -oE '[0-9]{8}_[0-9]{2}:[0-9]{2}' | sort -r | head -1)
+    [ -z "\${LATEST}" ] && { echo "ERROR: could not list arm64 templates from linuxcontainers.org"; exit 1; }
+    echo "Downloading arm64 template build \${LATEST}..."
+    curl -fsSL "\${BASE}/\${LATEST}/rootfs.tar.xz" -o "\${TMPL_DIR}/\${TMPL_NAME}"
+fi
+
+pct create 100 "\${TMPL_DIR}/\${TMPL_NAME}" \
+    --arch arm64 \
+    --ostype unmanaged \
+    --hostname ci-test-lxc \
+    --memory 64 \
+    --rootfs local:1 \
+    --unprivileged 1
+
+# Disable seccomp/apparmor — QEMU arm64 emulation blocks some syscalls
+sed -i '/^lxc[.]seccomp/d; /^lxc[.]apparmor/d' /etc/pve/lxc/100.conf
+echo "lxc.apparmor.profile: unconfined" >> /etc/pve/lxc/100.conf
+
+pct start 100
+sleep 5
+echo "Test LXC 100 created and started"
+pct status 100
+ENDSSH
+                """
+            }
+        }
+
+        stage('PBS backup') {
+            steps {
+                echo "Taking PBS backup of test LXC 100 -> pbs-ci storage..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+source /opt/proxmox-restore/config.env
+
+FINGERPRINT=\$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (sha256):" | awk '{print \$NF}')
+pvesh create /storage \
+    --storage "\${PVE_PBS_STORAGE_ID}" \
+    --type pbs \
+    --server "\${PVE_PBS_SERVER}" \
+    --datastore "\${PBS_DATASTORE_NAME}" \
+    --username "\${PBS_USER}" \
+    --password "\${PBS_USER_PASSWORD}" \
+    --fingerprint "\${FINGERPRINT}" \
+    --content backup \
+    --prune-backups "\${PBS_RETENTION_LOCAL}" || true
+
+systemctl is-active --quiet pvedaemon || systemctl start pvedaemon pveproxy pvestatd
+sleep 3
+
+vzdump 100 --storage "\${PVE_PBS_STORAGE_ID}" --mode snapshot --compress zstd
+echo "PBS backup complete"
+ENDSSH
+                """
+            }
+        }
+
+        stage('Backup PVE config to GDrive') {
+            steps {
+                echo "Backing up PVE host config to Google Drive..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+/usr/local/bin/backup-pve-config.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Restic backup to GDrive') {
+            steps {
+                echo "Backing up PBS datastore to Google Drive via resticprofile..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+/usr/local/bin/stop-proxmox-backup.sh
+
+resticprofile \
+    -c /etc/resticprofile/profiles.yaml \
+    -n pbs-backup \
+    init 2>/dev/null || true
+
+resticprofile \
+    -c /etc/resticprofile/profiles.yaml \
+    -n pbs-backup \
+    backup
+
+systemctl start proxmox-backup proxmox-backup-proxy
+echo "Restic backup to GDrive complete"
+ENDSSH
+                """
+            }
+        }
+
         stage('Run ShellSpec (Scenario A / arm64)') {
             steps {
                 echo "Running ShellSpec integration tests..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} \
-                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format documentation spec/scenario_a_spec.sh'
+                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_a_spec.sh' \
+                        > shellspec-a-arm64.xml
                 """
             }
         }
