@@ -1,5 +1,9 @@
 # proxmox-backup-restore
 
+> **⚠️ HOBBY PROJECT — USE AT YOUR OWN RISK**
+>
+> This is a personal homelab project built for two reasons: to have a reasonable backup safety net at home, and to have fun exploring what Claude Code can do as a coding assistant. It is not production software, has no guarantees, and comes with no support. The scripts work on my hardware — they may or may not work on yours. If you use this and lose data, that's on you.
+
 ## Why This Exists
 
 If you run a homelab Proxmox node and want proper offsite backups — but you only have one physical machine — you have a problem: there's nowhere local to send backups that isn't at risk alongside the hardware itself.
