@@ -75,6 +75,8 @@ backup-pve-config.sh (nightly at 04:00)
 
 > ⚠️ pipbs and pxvirt are community projects, not officially supported by Proxmox. Keep their package versions in sync — mixing can cause GUI rendering issues.
 
+> **Why Proxmox on a Pi 5?** The specific use case here is a small remote location with minimal IT infrastructure: running **Home Assistant** and a full **Unifi OS** instance side by side. Unifi OS is needed specifically for site-to-site VPN ("site magic") — this is not supported by the Unifi Network add-on in Home Assistant and requires a real Unifi OS server. A Pi 5 running Proxmox VE covers both on a single low-power device: HA and Unifi OS each get their own LXC/VM, no separate hardware needed.
+
 ---
 
 ## Which Scenario Applies to You?
@@ -152,8 +154,6 @@ Use this when setting up a new Proxmox node with no existing backups.
 2. SSH in as root
 
 **aarch64 (Raspberry Pi 5):**
-
-> **Why Proxmox on a Pi 5?** The specific use case here is a small remote location with minimal IT infrastructure: running **Home Assistant** and a full **Unifi OS** instance side by side. Unifi OS is needed specifically for site-to-site VPN ("site magic") — this is not supported by the Unifi Network add-on in Home Assistant and requires a real Unifi OS server. A Pi 5 running Proxmox VE covers both on a single low-power device: HA and Unifi OS each get their own LXC/VM, no separate hardware needed.
 
 Proxmox is not officially supported on ARM64. Use `install-proxmox-rpi5.sh` to automate the community install:
 
