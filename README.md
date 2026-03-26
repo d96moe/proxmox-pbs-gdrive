@@ -482,6 +482,65 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
 
 ---
 
+## Troubleshooting
+
+**`apt update` returns 401 errors**
+The Proxmox enterprise repos require a paid subscription. The install script removes them automatically, but if they reappear (e.g. after a PBS upgrade):
+```bash
+rm -f /etc/apt/sources.list.d/*enterprise*
+apt update
+```
+
+**PBS won't start after install**
+Check that the PBS partition is mounted and the datastore path exists:
+```bash
+systemctl status proxmox-backup proxmox-backup-proxy
+df -h /mnt/pbs
+journalctl -u proxmox-backup -n 30
+```
+
+**PBS runs out of inodes**
+Happens if the partition was formatted with `-T largefile4` or similar. PBS creates millions of small chunk files. Only fix is to reformat:
+```bash
+mkfs.ext4 -m 0 /dev/sdXN   # default inode ratio — do NOT use -T largefile4
+```
+
+**restic backup fails with "repository is already locked"**
+A previous backup crashed mid-run. Remove the stale lock:
+```bash
+source /etc/proxmox-backup-restore/config.env
+restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \
+  --password-file "${RESTIC_PASSWORD_FILE}" unlock --remove-all
+```
+
+**rclone fails with "Token has been expired"**
+The Google Drive OAuth token needs to be renewed. Run `rclone config` on the PVE node, select the existing remote, and re-authenticate. The token is stored in `/root/.config/rclone/rclone.conf`.
+
+**GDrive upload is extremely slow or stalls**
+rclone's default concurrency can saturate upload bandwidth. Tune with:
+```bash
+resticprofile --name pbs-backup backup -- --option rclone.args="copy --transfers=4 --checkers=8"
+```
+
+**ARM64: DNS broken after reboot**
+pxvirt installs resolvconf which can overwrite `/etc/resolv.conf` on reboot. The install script detects and fixes this automatically on re-run. To fix manually:
+```bash
+rm -f /etc/resolv.conf
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+```
+
+**ARM64: PBS fails to start — "unsupported page size"**
+The default Pi 5 kernel uses 16k pages; PBS requires 4k. The install script switches kernels automatically, but if you reinstalled the kernel manually:
+```bash
+echo "kernel=kernel8.img" >> /boot/firmware/config.txt
+reboot
+```
+
+**Scenario B: VM restore fails — "no such snapshot"**
+The PBS fingerprint or token in config.env doesn't match the restored PBS instance. Re-run `restore-2-auth.sh` after `restore-1-install.sh` completes — it regenerates the token and updates the PBS storage definition in PVE.
+
+---
+
 ## CI & Testing
 
 Two Jenkins pipelines run on a weekly basis to verify both scenarios end-to-end. ShellSpec integration tests verify the end state after each run.
