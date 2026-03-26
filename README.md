@@ -207,7 +207,7 @@ Use this when setting up a new Proxmox node with no existing backups.
 
 **aarch64 (Raspberry Pi 5):**
 
-Proxmox is not officially supported on ARM64. Use `install-proxmox-rpi5.sh` to automate the community install:
+Proxmox is not officially supported on ARM64. `restore-1-install.sh` handles the full install automatically:
 
 1. Install Debian Trixie (64-bit) with Raspberry Pi Imager
 2. SSH in as root, then:
@@ -216,16 +216,12 @@ Proxmox is not officially supported on ARM64. Use `install-proxmox-rpi5.sh` to a
 apt-get install -y git
 git clone https://github.com/d96moe/proxmox-backup-restore.git
 cd proxmox-backup-restore
+cp config_rpi5.env config.env
+nano config.env   # set PVE_HOSTNAME, PVE_IP, PVE_GATEWAY, PVE_IFACE, PBS_PARTITION
+./restore-1-install.sh
 ```
 
-3. Edit the variables at the top of the script (hostname, IP, gateway, network interface):
-
-```bash
-nano install-proxmox-rpi5.sh
-./install-proxmox-rpi5.sh
-```
-
-The script sets hostname, configures the network bridge, adds pxvirt and pipbs repos, installs Proxmox VE + PBS, switches to the 4k kernel (required for PBS on Pi5), and reboots. GUI available at `https://<IP>:8006` after reboot.
+The script sets hostname, configures the network bridge, adds the pxvirt repo, installs Proxmox VE, switches to the 4k kernel (required for PBS on Pi5), and reboots. Run it again after reboot to install PBS and all backup tools. GUI available at `https://<IP>:8006`.
 
 > ⚠️ Do NOT run `apt upgrade` without checking for pxvirt/pipbs version conflicts first.
 
@@ -494,7 +490,7 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
 - **restic size vs PBS size:** restic stores PBS chunks as-is (already deduplicated by PBS), so Google Drive usage ≈ local PBS datastore size — not double.
 - **First restic snapshot** uploads everything; subsequent runs are incremental.
 - **pbs-enterprise repo** is automatically removed after PBS install — it requires a paid subscription and causes 401 errors otherwise.
-- **ARM64 (Pi5):** `install-proxmox-rpi5.sh` switches to the 4k kernel (`kernel=kernel8.img`) — required because the default Pi5 kernel uses 16k page size, which is incompatible with PBS.
+- **ARM64 (Pi5):** `restore-1-install.sh` switches to the 4k kernel (`kernel=kernel8.img`) — required because the default Pi5 kernel uses 16k page size, which is incompatible with PBS.
 - **config.db WAL checkpoint:** `backup-pve-config.sh` runs `PRAGMA wal_checkpoint(FULL)` before archiving to flush all pending writes from the SQLite WAL file. Without this, recent VM creates or storage changes may be missing from the backup.
 - **pmxcfs and config restore:** `/etc/pve/` is a FUSE filesystem managed by pmxcfs. Restoring PVE config requires restoring `/var/lib/pve-cluster/config.db` (the underlying SQLite DB), not the `/etc/pve/` files directly. `restore-2-auth.sh` stops pve-cluster before extraction and restarts it after — pmxcfs then rebuilds `/etc/pve/` from the restored database.
 - **proxmox-backup-client auth:** when running non-interactively, set `PBS_PASSWORD` and `PBS_FINGERPRINT` as environment variables. The `--fingerprint` flag does not exist on the `snapshots` subcommand.
