@@ -2,7 +2,7 @@
 
 > **⚠️ HOBBY PROJECT — USE AT YOUR OWN RISK**
 >
-> This is a personal homelab project built for two reasons: to have a reasonable backup safety net at home, and to have fun exploring what Claude Code can do as a coding assistant. It is not production software, has no guarantees, and comes with no support. The scripts work on my hardware — they may or may not work on yours. If you use this and lose data, that's on you.
+> This is a personal homelab project built for two reasons: to have a reasonable backup safety net at home, and to have fun exploring what Claude Code can do as a coding assistant. The scripts, the CI pipelines, the tests, and yes — this README — were all written with Claude Code assistance. It is not production software, has no guarantees, and comes with no support. The scripts work on my hardware — they may or may not work on yours. If you use this and lose data, that's on you.
 
 ## Why This Exists
 
