@@ -98,27 +98,16 @@ backup-pve-config.sh (nightly at 04:00)
 | <img src="https://www.debian.org/logos/openlogo-nd-100.png" height="20"> Debian (base) | included via PVE installer | Trixie (manual install before PVE) | [debian.org](https://www.debian.org/) |
 | <img src="https://www.raspberrypi.com/app/uploads/2022/02/COLOUR-Raspberry-Pi-Symbol-Registered.png" height="20"> Hardware | Any x86_64 with NVMe | Pi 5 8GB + NVMe (tested via USB adapter) | [Raspberry Pi 5](https://www.raspberrypi.com/products/raspberry-pi-5/) |
 
-> ⚠️ pipbs and pxvirt are community projects, not officially supported by Proxmox. They must be kept at compatible versions — a mismatch can cause GUI rendering issues and other instability.
-
-**Keeping pxvirt and pipbs in sync**
-
-`restore-1-install.sh` compares available versions from both repos **before installing anything**. If the latest releases are at different major.minor versions, it automatically pins whichever package is ahead to an older matching version, and warns you loudly.
-
-Packages are **not** permanently held — security fixes must be able to install. But you need to keep both in sync when upgrading. Before running `apt upgrade` on a Pi 5, check that both repos have released the same major.minor version:
-
-```bash
-# Check what's available before upgrading
-apt-cache policy proxmox-ve proxmox-backup-server | grep -A1 "Candidate:"
-
-# Verify both are at the same major.minor (e.g. both 9.x or both 8.x)
-dpkg -l proxmox-ve proxmox-backup-server | awk '/^ii/{print $2, $3}'
-```
-
-If only one repo has a new version, wait for the other to catch up before upgrading. Upgrading them one at a time risks GUI rendering issues or other instability.
-
 > **Why Proxmox on a Pi 5?** The specific use case here is a small remote location with minimal IT infrastructure: running **Home Assistant** and a full **Unifi OS** instance side by side. Unifi OS is needed specifically for site-to-site VPN ("site magic") — this is not supported by the Unifi Network add-on in Home Assistant and requires a real Unifi OS server. A Pi 5 running Proxmox VE covers both on a single low-power device: HA and Unifi OS each get their own LXC/VM, no separate hardware needed.
 
 > ⚠️ **Do NOT run this from an SD card.** Proxmox VE's write patterns (journals, VM disk I/O, PBS chunk store) will destroy an SD card quickly. You need an SSD. The setup this repo was built on uses a Pi 5 booting from an NVMe drive connected via USB adapter — cheap and works well.
+
+> ⚠️ **ARM64 only:** pipbs and pxvirt are community projects, not officially supported by Proxmox. They must be kept at the same major.minor version — a mismatch can cause GUI rendering issues and other instability. `restore-1-install.sh` checks versions from both repos **before installing anything** and automatically pins whichever package is ahead to a matching older version if needed. Before running `apt upgrade`, always verify both repos are at the same version first:
+> ```bash
+> apt-cache policy proxmox-ve proxmox-backup-server | grep -A1 "Candidate:"
+> dpkg -l proxmox-ve proxmox-backup-server | awk '/^ii/{print $2, $3}'
+> ```
+> If only one repo has a new version, wait for the other to catch up.
 
 ---
 
