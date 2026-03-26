@@ -96,9 +96,9 @@ Before running any scripts, make sure you have:
 
 PBS should have its own dedicated partition. It can technically run on a shared partition, but it's strongly discouraged: if anything else (OS, VMs, logs) fills the disk, PBS backups fail. Keeping it separate also makes it easy to see exactly how much space backups are consuming.
 
-**Size:** depends entirely on how many VMs/LXCs you have and how large they are. PBS deduplicates aggressively so the datastore is often much smaller than the sum of your VM sizes — but leave headroom.
+**Size:** depends on how many VMs/LXCs you have and how large they are. PBS deduplicates aggressively so the datastore is often much smaller than the sum of VM sizes — but leave headroom. The script will warn (not fail) if the partition is smaller than 15% of the total disk.
 
-Create and format the partition before running any scripts:
+**The script does not create or format the partition — you must do this manually before running `restore-1-install.sh`.** The script will verify the partition exists and is a block device, but will exit with an error if it doesn't.
 
 ```bash
 # Example: create partition on /dev/sda
