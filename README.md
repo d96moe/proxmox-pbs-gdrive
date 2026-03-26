@@ -4,7 +4,7 @@
 >
 > This is a personal homelab project built for two reasons: to have a reasonable backup safety net at home, and to have fun exploring what Claude Code can do as a coding assistant. The scripts, the CI pipelines, the tests, and yes — this README — were all written with Claude Code assistance. It is not production software, has no guarantees, and comes with no support. The scripts work on my hardware — they may or may not work on yours. If you use this and lose data, that's on you.
 >
-> A real-world disaster recovery using this setup has never actually been performed. To compensate for that, a fairly advanced automated test environment has been implemented: Jenkins pipelines run both the full backup scenario and a complete end-to-end DR restore on a nested virtualized Proxmox instance, with ShellSpec integration tests verifying the end state. It's as close to the real thing as you can get without actually pulling the plug — but it's still not the same as having done it for real.
+> A real-world disaster recovery using this setup has never actually been performed. To compensate for that, a fairly advanced automated test environment has been implemented: Jenkins pipelines run both the full backup scenario and a complete end-to-end disaster recovery restore on a nested virtualized Proxmox instance, with ShellSpec integration tests verifying the end state. It's as close to the real thing as you can get without actually pulling the plug — but it's still not the same as having done it for real.
 
 ## Why This Exists
 
@@ -42,8 +42,8 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 **Pros:**
 - **Single machine** — no second server or NAS needed for offsite backups
 - **Real cloud backup** — Google Drive is genuinely offsite, survives fire/theft/flood alongside the hardware
-- **Full DR from anywhere** — as long as you have internet access and new hardware, you can recover completely
-- **Self-contained restore** — the config tarball carries credentials and PVE config, so DR requires no manual reclone/restic setup on the new machine
+- **Full disaster recovery from anywhere** — as long as you have internet access and new hardware, you can recover completely
+- **Self-contained restore** — the config tarball carries credentials and PVE config, so disaster recovery requires no manual reclone/restic setup on the new machine
 - **PBS deduplication** — local backups are fast and space-efficient; only changed blocks are stored
 - **restic incremental backups** — after the first full upload, only the diff is sent to Google Drive; nightly backups are a fraction of the total datastore size
 
@@ -51,7 +51,7 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 - **No UI for GDrive backups** — restic is entirely CLI-driven; there is no PVE interface for managing or monitoring Google Drive snapshots. *(A separate hobby project is underway to build a simple web UI to address this.)*
 - **Restoring a single VM from GDrive is not possible** — restic backs up the entire PBS datastore as a unit. If you only want to recover one VM from Google Drive, you still have to restore the full datastore (all VMs and LXCs) first, then restore the individual VM from PBS. There is no way to cherry-pick a single VM directly from GDrive.
 - **First backup is slow** — the initial restic upload is the full PBS datastore; can take many hours depending on size and connection speed
-- **Full DR takes hours** — restoring from GDrive means downloading the entire datastore; not a quick recovery
+- **Full disaster recovery takes hours** — restoring from GDrive means downloading the entire datastore; not a quick recovery
 - **Google Drive quota** — depending on the number of VMs/LXCs and their sizes, a rather large GDrive quota may be needed; the base usage mirrors your PBS datastore size, and retention keeping multiple snapshots adds on top of that
 
   **Real-world examples:**
