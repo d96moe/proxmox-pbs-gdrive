@@ -60,7 +60,9 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 | x86_64 homelab | 4 (Windows, macOS, Linux, HA OS) | 8 (services, automation, databases, utilities) | 275 GB | ~423 GiB |
 | Pi 5 remote node | 2 (HA OS, Linux) | — | 17 GB | ~17 GiB |
 
-The Pi 5 numbers also show why restic beats Home Assistant's built-in backup: HA's own backup creates a full archive every time with no incremental or deduplication. With restic, 5 snapshots of an already-deduplicated 17 GB PBS datastore land at only 17 GiB total on GDrive — because restic only uploads what changed between runs. For the x86_64 setup, the PBS datastore is 275 GB on disk (already deduplicated by PBS); 5 restic snapshots of that datastore cost only 423 GiB on GDrive, because restic deduplicates across snapshots and only stores new chunks each night.
+Note that restic backs up the **entire PBS datastore** as a unit — not individual VMs. PBS has already deduplicated and chunked everything, so the datastore is compact. With equal retention in both places, GDrive usage would match the local PBS size exactly. The GDrive total grows beyond that only when you keep more history in GDrive than locally — and that's where restic pays off: it only uploads chunks that weren't in a previous snapshot, so extra history costs almost nothing.
+
+The Pi 5 numbers also show why this beats Home Assistant's built-in backup: HA creates a full uncompressed archive on every run with no deduplication. A PBS + restic setup keeps the same history at a fraction of the space.
 
 ---
 
