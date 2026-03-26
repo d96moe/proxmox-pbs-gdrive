@@ -45,6 +45,7 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 - **Full DR from anywhere** — as long as you have internet access and new hardware, you can recover completely
 - **Self-contained restore** — the config tarball carries credentials and PVE config, so DR requires no manual reclone/restic setup on the new machine
 - **PBS deduplication** — local backups are fast and space-efficient; only changed blocks are stored
+- **restic incremental backups** — after the first full upload, only the diff is sent to Google Drive; nightly backups are a fraction of the total datastore size
 
 **Cons:**
 - **No UI for GDrive backups** — restic is entirely CLI-driven; there is no PVE interface for managing or monitoring Google Drive snapshots. *(A separate hobby project is underway to build a simple web UI to address this.)*
