@@ -1,4 +1,4 @@
-# proxmox-backup-restore
+# proxmox-pbs-gdrive
 
 > **⚠️ HOBBY PROJECT — USE AT YOUR OWN RISK**
 >
@@ -137,7 +137,7 @@ backup-pve-config.sh (nightly at 04:00)
 ## Repository Layout
 
 ```
-proxmox-backup-restore/
+proxmox-pbs-gdrive/
 ├── restore-1-install.sh      # Setup step 3: install PBS, rclone, restic, resticprofile
 ├── restore-2-auth.sh         # DR step 5: restore rclone auth + PVE config from GDrive
 ├── restore-3-pve.sh          # Fresh step 6 / DR step 6: wire PBS into PVE
@@ -256,8 +256,8 @@ Steps 1–3 are the same for both fresh installations and disaster recovery.
 
 ```bash
 apt-get install -y git
-git clone https://github.com/d96moe/proxmox-backup-restore.git
-cd proxmox-backup-restore
+git clone https://github.com/d96moe/proxmox-pbs-gdrive.git
+cd proxmox-pbs-gdrive
 cp config_x86_standard.env config.env
 nano config.env
 ```
@@ -271,8 +271,8 @@ Proxmox is not officially supported on ARM64. `restore-1-install.sh` handles the
 
 ```bash
 apt-get install -y git
-git clone https://github.com/d96moe/proxmox-backup-restore.git
-cd proxmox-backup-restore
+git clone https://github.com/d96moe/proxmox-pbs-gdrive.git
+cd proxmox-pbs-gdrive
 cp config_rpi5.env config.env
 nano config.env   # set PVE_HOSTNAME, PVE_IP, PVE_GATEWAY, PVE_IFACE, PBS_PARTITION
 ./restore-1-install.sh
