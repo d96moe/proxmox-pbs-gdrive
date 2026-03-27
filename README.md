@@ -422,11 +422,14 @@ All schedules and retention values are configured in `config.env`.
 
 > ℹ️ All schedules are set automatically by `restore-3-pve.sh`. The PBS backup job can be adjusted afterwards in the PVE GUI under Datacenter → Backup.
 
-| Storage | Retention variable(s) | Default |
+| Storage | Retention variable | Default |
 |---|---|---|
 | PBS local `/mnt/pbs` | `PBS_RETENTION_LOCAL` | `keep-last=3,keep-daily=3` |
-| Google Drive (restic) | `RESTIC_RETENTION_KEEP_LAST/DAILY/WEEKLY/MONTHLY` | 1 / 3 / 2 / 3 |
-| Google Drive (config tarballs) | `CONFIG_KEEP_DAYS` | 7 |
+| Google Drive (restic) | `RESTIC_RETENTION_KEEP_LAST` | `1` |
+| | `RESTIC_RETENTION_KEEP_DAILY` | `3` |
+| | `RESTIC_RETENTION_KEEP_WEEKLY` | `2` |
+| | `RESTIC_RETENTION_KEEP_MONTHLY` | `3` |
+| Google Drive (config tarballs) | `CONFIG_KEEP_DAYS` | `7` |
 
 Local retention is intentionally short — Google Drive handles long-term retention.
 
