@@ -269,7 +269,7 @@ ENDSSH
                 echo "Running ShellSpec integration tests..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} \
-                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit spec/scenario_b_spec.sh' \
+                        'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit ci/spec/scenario_b_spec.sh' \
                         > shellspec-b-arm64.xml
                 """
             }

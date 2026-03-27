@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# spec/scenario_a_spec.sh — ShellSpec integration tests for Scenario A
+# ci/spec/scenario_a_spec.sh — ShellSpec integration tests for Scenario A
 #
 # Verifies end-state after: install + PBS backup + GDrive backup + config backup.
 # Run by Jenkinsfile.restore-test after all pipeline stages complete.

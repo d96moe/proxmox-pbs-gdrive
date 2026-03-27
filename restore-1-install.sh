@@ -626,7 +626,7 @@ YAML
 echo "=== Step 10: Install PVE config backup script ==="
 mkdir -p /etc/proxmox-backup-restore
 cp "${SCRIPT_DIR}/config.env" /etc/proxmox-backup-restore/config.env
-cp "${SCRIPT_DIR}/backup-pve-config.sh" /usr/local/bin/backup-pve-config.sh
+cp "${SCRIPT_DIR}/scripts/backup-pve-config.sh" /usr/local/bin/backup-pve-config.sh
 chmod +x /usr/local/bin/backup-pve-config.sh
 
 cat > /etc/systemd/system/pve-config-backup.service << SERVICE

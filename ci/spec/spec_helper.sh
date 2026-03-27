@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# spec/spec_helper.sh — Shared setup for ShellSpec integration tests
+# ci/spec/spec_helper.sh — Shared setup for ShellSpec integration tests
 #
 # Sources config.env and exports all variables so they are available
 # inside When run / When call blocks in scenario specs.

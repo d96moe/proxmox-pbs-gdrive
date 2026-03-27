@@ -83,7 +83,7 @@ Full QEMU emulation means arm64 pipelines run **3–5× slower** than x86_64.
 
 ## What ShellSpec Tests Verify
 
-### Scenario A (`spec/scenario_a_spec.sh`)
+### Scenario A (`ci/spec/scenario_a_spec.sh`)
 
 After the full install + backup pipeline:
 
@@ -95,7 +95,7 @@ After the full install + backup pipeline:
 - At least one restic snapshot exists in the Google Drive repository
 - At least one config tarball (`pve-config-*.tar.gz`) exists on Google Drive
 
-### Scenario B (`spec/scenario_b_spec.sh`)
+### Scenario B (`ci/spec/scenario_b_spec.sh`)
 
 After the full DR restore pipeline:
 
@@ -204,8 +204,8 @@ bash <(curl -fsSL https://git.io/shellspec) --yes
 Copy the CI config and run:
 ```bash
 cp ci/config_ci.env config.env
-shellspec --shell bash --format documentation spec/scenario_a_spec.sh
-shellspec --shell bash --format documentation spec/scenario_b_spec.sh
+shellspec --shell bash --format documentation ci/spec/scenario_a_spec.sh
+shellspec --shell bash --format documentation ci/spec/scenario_b_spec.sh
 ```
 
 > Note: tests query live system state — they only pass if the corresponding pipeline has already run and completed successfully.

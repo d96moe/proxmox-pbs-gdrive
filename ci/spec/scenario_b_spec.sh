@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# spec/scenario_b_spec.sh — ShellSpec integration tests for Scenario B
+# ci/spec/scenario_b_spec.sh — ShellSpec integration tests for Scenario B
 #
 # Verifies end-state after full DR restore:
 #   config.db restored → rclone auth working → PBS wired into PVE →
