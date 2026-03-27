@@ -13,6 +13,7 @@
 - [Pros and Cons](#pros-and-cons)
 - [How It Works](#how-it-works)
 - [Supported Platforms](#supported-platforms)
+- [Repository Layout](#repository-layout)
 - [Which Scenario Applies to You?](#which-scenario-applies-to-you)
 - [Before You Start](#before-you-start)
 - [Scenario A: Fresh Setup](#scenario-a-fresh-setup)
@@ -128,6 +129,33 @@ backup-pve-config.sh (nightly at 04:00)
 > dpkg -l proxmox-ve proxmox-backup-server | awk '/^ii/{print $2, $3}'
 > ```
 > If only one repo has a new version, wait for the other to catch up.
+
+---
+
+## Repository Layout
+
+```
+proxmox-backup-restore/
+├── restore-1-install.sh      # Scenario A step 1: install PBS, rclone, restic, resticprofile
+├── restore-2-auth.sh         # Scenario B step 1: restore rclone auth + PVE config from GDrive
+├── restore-3-pve.sh          # Scenario B step 2: wire PBS into PVE, restore LXC from snapshot
+├── restore-4-gdrive.sh       # Scenario A step 2: configure rclone GDrive auth
+├── config.env.example        # Template — copy to config.env and fill in your values
+├── scripts/
+│   ├── backup-restic-vms.sh  # Nightly restic backup of PBS datastore to GDrive
+│   │                         # Installed to /usr/local/bin/ by restore-3-pve.sh
+│   │                         # Runs as systemd service (restic-backup.timer)
+│   └── backup-pve-config.sh  # Daily PVE config backup (config.db, /etc/pve, rclone token, etc.)
+│                             # Installed to /usr/local/bin/ by restore-1-install.sh
+│                             # Runs as systemd service (pve-config-backup.timer)
+└── ci/                       # CI pipeline — not needed for normal use
+    ├── Jenkinsfile.*         # Jenkins pipeline definitions
+    ├── config_ci*.env        # CI-specific config templates
+    ├── setup-*-template.sh   # One-time VM template creation scripts
+    └── spec/                 # ShellSpec integration tests
+```
+
+The two scripts under `scripts/` are **helper scripts installed onto your Proxmox host** by the main restore scripts — they are not CI-only. They run on a schedule after setup and are what keeps your backups going day-to-day.
 
 ---
 
