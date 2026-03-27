@@ -197,8 +197,6 @@ This installs AAVMF arm64 UEFI firmware, downloads a vanilla Debian Trixie arm64
 
 ## Credentials and Secrets
 
-**Nothing sensitive is stored in this repository.**
-
 | What | Where it lives | How CI gets it |
 |---|---|---|
 | rclone OAuth token (`rclone.conf`) | `/root/.config/rclone/rclone.conf` on the PVE host | Piped live over SSH from PVE host to CI VM during `Copy credentials` stage |
