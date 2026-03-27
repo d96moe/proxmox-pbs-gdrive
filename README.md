@@ -407,21 +407,26 @@ pct restore <vmid> pbs-local:backup/ct/<vmid>/<timestamp> --storage local
 
 ## Backup Schedule and Retention
 
-| Time | Job |
-|------|-----|
-| 02:00 | PBS backup all VMs/LXCs (vzdump via PVE schedule) |
-| 03:00 | PBS prune (keep-last 3, keep-daily 3) |
-| 03:30 | PBS garbage collection (frees chunks pruned the night before) |
-| ~02:30 | restic snapshot PBS datastore → Google Drive |
-| 04:00 | PVE config backup → Google Drive |
+All schedules and retention values are configured in `config.env`.
 
-**Why this order:** Prune removes index entries but doesn't free disk space. GC (24h cutoff) runs after prune and actually frees chunks. restic runs after GC, uploading the clean post-prune datastore. Config backup runs last, capturing the final night's state.
+| config.env variable | Default | Job |
+|---|---|---|
+| `PBS_BACKUP_SCHEDULE` | `02:00` | PBS backup all VMs/LXCs (set in PVE GUI: Datacenter → Backup) |
+| `PBS_PRUNE_SCHEDULE` | `03:00` | PBS prune old snapshots |
+| `PBS_GC_SCHEDULE` | `03:30` | PBS garbage collection (frees chunks from last night's prune) |
+| `RESTIC_BACKUP_SCHEDULE` | `04:00` | restic snapshot PBS datastore → Google Drive |
+| `RESTIC_FORGET_SCHEDULE` | `04:30` | restic prune old GDrive snapshots |
+| `CONFIG_BACKUP_SCHEDULE` | `05:00` | PVE config tarball → Google Drive |
 
-| Storage | Retention |
-|---------|-----------|
-| PBS local `/mnt/pbs` | keep-last=3, keep-daily=3 |
-| Google Drive (restic) | keep-last=3, keep-daily=6, keep-weekly=3, keep-monthly=5 |
-| Google Drive (config tarballs) | 7 most recent (configurable via `CONFIG_KEEP_DAYS`) |
+**Why this order:** prune removes index entries but doesn't free disk space immediately. GC runs after prune and actually frees the chunks. restic runs after GC to snapshot the clean post-prune datastore. Config backup runs last.
+
+> ℹ️ PBS backup schedule (`PBS_BACKUP_SCHEDULE`) is not wired into the scripts — configure it in PVE GUI under Datacenter → Backup. All other schedules are set automatically by `restore-3-pve.sh`.
+
+| Storage | Retention variable(s) | Default |
+|---|---|---|
+| PBS local `/mnt/pbs` | `PBS_RETENTION_LOCAL` | `keep-last=3,keep-daily=3` |
+| Google Drive (restic) | `RESTIC_RETENTION_KEEP_LAST/DAILY/WEEKLY/MONTHLY` | 1 / 3 / 2 / 3 |
+| Google Drive (config tarballs) | `CONFIG_KEEP_DAYS` | 7 |
 
 Local retention is intentionally short — Google Drive handles long-term retention.
 
