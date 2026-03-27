@@ -226,11 +226,19 @@ Minimum variables to set:
 
 Use this when setting up a new Proxmox node with no existing backups.
 
-### A0: Install Proxmox VE
+### A0: Install Proxmox VE and clone repo
 
 **x86_64:**
 1. Download and install Proxmox VE from https://www.proxmox.com/downloads
-2. SSH in as root
+2. SSH in as root, then:
+
+```bash
+apt-get install -y git
+git clone https://github.com/d96moe/proxmox-backup-restore.git
+cd proxmox-backup-restore
+cp config_x86_standard.env config.env
+nano config.env
+```
 
 **aarch64 (Raspberry Pi 5):**
 
@@ -256,20 +264,7 @@ The script sets hostname, configures the network bridge, adds the pxvirt repo, i
 
 See [Before You Start → Create a dedicated PBS partition](#1-create-a-dedicated-pbs-partition).
 
-### A2: Clone repo and configure
-
-> **arm64 (Pi 5):** already done in A0 — skip to A3.
-
-```bash
-apt-get install -y git
-git clone https://github.com/d96moe/proxmox-backup-restore.git
-cd proxmox-backup-restore
-chmod +x *.sh
-cp config_x86_standard.env config.env
-nano config.env
-```
-
-### A3: Install PBS and backup tools
+### A2: Install PBS and backup tools
 
 ```bash
 ./restore-1-install.sh
@@ -285,7 +280,7 @@ This will:
 
 > ⚠️ **Raspberry Pi 5:** If the Pi is running a 16k page-size kernel (incompatible with PBS), the script detects this, offers to fix it, and reboots. Run the script again after reboot.
 
-### A4: Configure rclone (Google Drive OAuth)
+### A3: Configure rclone (Google Drive OAuth)
 
 #### One-time: create Google OAuth credentials
 
@@ -332,7 +327,7 @@ Verify:
 rclone lsd gdrive:bu
 ```
 
-### A5: Init restic repository and save password
+### A4: Init restic repository and save password
 
 ```bash
 echo 'YOUR-RESTIC-PASSWORD' > /etc/resticprofile/restic-password
@@ -345,7 +340,7 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
 
 > ⚠️ Store this password in a password manager — losing it means losing access to all Google Drive backups.
 
-### A6: Wire PBS into PVE and activate schedules
+### A5: Wire PBS into PVE and activate schedules
 
 ```bash
 ./restore-3-pve.sh
@@ -353,7 +348,7 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
 
 Adds PBS as PVE storage and activates the nightly restic backup schedule.
 
-### A7: Run first manual backup
+### A6: Run first manual backup
 
 ```bash
 # PBS backup of all VMs/LXCs
