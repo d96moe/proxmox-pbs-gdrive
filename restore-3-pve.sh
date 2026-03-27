@@ -79,7 +79,7 @@ echo "=== Step 7: Install restic backup script + systemd timer ==="
 # The script stops PBS, snapshots the clean post-prune datastore (tagged per VM/LXC),
 # runs forget/prune for Google Drive retention, then restarts PBS.
 
-install -m 750 "${SCRIPT_DIR}/backup-restic-vms.sh" /usr/local/bin/backup-restic-vms.sh
+install -m 750 "${SCRIPT_DIR}/scripts/backup-restic-vms.sh" /usr/local/bin/backup-restic-vms.sh
 
 # systemd service
 cat > /etc/systemd/system/restic-backup.service << SVCEOF
