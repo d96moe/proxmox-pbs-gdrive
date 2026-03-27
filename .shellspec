@@ -1,2 +1,3 @@
 --shell bash
 --require spec_helper
+--load-path ci/spec
