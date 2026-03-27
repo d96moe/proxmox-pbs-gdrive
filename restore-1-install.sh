@@ -319,6 +319,8 @@ EOF
         fi
         echo "  pxvirt install attempt ${_attempt}/3 failed, retrying in 15s..."
         sleep 15
+        rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null || true
+        dpkg --configure -a 2>/dev/null || true
         apt_get update -qq
     done
     command -v pvesh &>/dev/null || { echo "ERROR: proxmox-ve install failed after 3 attempts"; exit 1; }
