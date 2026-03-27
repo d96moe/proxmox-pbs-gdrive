@@ -215,7 +215,7 @@ Minimum variables to set:
 | Variable | Description |
 |---|---|
 | `PBS_PARTITION` | Dedicated PBS partition, e.g. `/dev/sda3` or `/dev/nvme0n1p4` |
-| `PBS_USER_PASSWORD` | **Change from `changeme`!** |
+| `PBS_USER_PASSWORD` | Set a strong password — or skip editing and `export PBS_USER_PASSWORD=...` before running the script |
 | `RESTICPROFILE_GDRIVE_REMOTE` | rclone remote name (must match what you configure in rclone) |
 | `RESTICPROFILE_GDRIVE_PATH` | Google Drive path for restic repo |
 | `GDRIVE_CONFIG_FOLDER` | Google Drive folder for config tarballs |
