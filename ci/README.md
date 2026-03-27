@@ -119,6 +119,18 @@ After the full DR restore pipeline:
 - The x86_64 PVE host must have template VM 9001 — run `ci/setup-x86-template.sh` once to create it
 - The x86_64 PVE host must have template VM 9002 — run `ci/setup-arm64-template.sh` once to create it. No Pi 5 or separate arm64 hardware needed.
 
+**Adapt IPs to your network:**
+
+The Jenkinsfiles and setup scripts contain IPs specific to this setup. Change them to match your environment before running:
+
+| Variable | Where | Default (this repo) | What to set |
+|---|---|---|---|
+| `PVE_HOST` | All Jenkinsfiles (top) | `192.168.0.200` | Your PVE host IP |
+| `VM_IP` | x86 Jenkinsfiles (top) | `192.168.0.251` | Free IP for the x86 CI VM |
+| `VM_IP` | arm64 Jenkinsfiles (top) | `192.168.0.252` | Free IP for the arm64 CI VM |
+| `VM_IP` / `GATEWAY` | `ci/setup-x86-template.sh` | `192.168.0.251` / `.1` | Same IP + your gateway |
+| `VM_IP` / `GATEWAY` | `ci/setup-arm64-template.sh` | `192.168.0.252` / `.1` | Same IP + your gateway |
+
 The test VMs are **created by Jenkins** from these templates at the start of each build and destroyed afterwards. No persistent test node to maintain.
 
 **Jenkins credentials** (configure in Jenkins → Manage Credentials):
