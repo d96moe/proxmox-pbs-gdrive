@@ -258,12 +258,14 @@ See [Before You Start → Create a dedicated PBS partition](#1-create-a-dedicate
 
 ### A2: Clone repo and configure
 
+> **arm64 (Pi 5):** already done in A0 — skip to A3.
+
 ```bash
 apt-get install -y git
 git clone https://github.com/d96moe/proxmox-backup-restore.git
 cd proxmox-backup-restore
 chmod +x *.sh
-cp config_x86_standard.env config.env   # or config_rpi5.env
+cp config_x86_standard.env config.env
 nano config.env
 ```
 
