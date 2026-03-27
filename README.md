@@ -159,9 +159,7 @@ The two scripts under `scripts/` are **helper scripts installed onto your Proxmo
 
 ## Setup
 
-Before starting, make sure you have:
-- A **Google account** with enough Drive space — roughly 1.5× your PBS datastore size
-- A **restic password** chosen and stored in a password manager — you cannot recover GDrive backups without it
+Before starting, make sure you have a **Google account** with enough Drive space — roughly 1.5× your PBS datastore size.
 
 Steps 1–3 are the same for both fresh installations and disaster recovery.
 
