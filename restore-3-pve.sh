@@ -87,13 +87,15 @@ else
     echo "  Created backup job — schedule: ${PBS_BACKUP_SCHEDULE}"
 fi
 
-# PBS prune job (separate prune-job, NOT a datastore-level setting)
+# PBS prune job — convert "keep-last=3,keep-daily=3" → --keep-last 3 --keep-daily 3
+read -ra PRUNE_FLAGS <<< "$(echo "${PBS_RETENTION_LOCAL}" | sed 's/,/ --/g; s/=/ /g; s/^/--/')"
 proxmox-backup-manager prune-job create nightly-prune \
     --store ${PBS_DATASTORE_NAME} \
     --schedule "${PBS_PRUNE_SCHEDULE}" \
-    --keep-last 3 2>/dev/null || \
+    "${PRUNE_FLAGS[@]}" 2>/dev/null || \
 proxmox-backup-manager prune-job update nightly-prune \
-    --schedule "${PBS_PRUNE_SCHEDULE}"
+    --schedule "${PBS_PRUNE_SCHEDULE}" \
+    "${PRUNE_FLAGS[@]}"
 
 # PBS garbage collection
 proxmox-backup-manager datastore update ${PBS_DATASTORE_NAME} \
