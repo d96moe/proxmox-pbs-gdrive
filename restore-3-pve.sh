@@ -64,6 +64,7 @@ else
 fi
 
 echo "=== Step 6: Set PBS backup, prune and GC schedules ==="
+mkdir -p /var/lock/pve-manager
 # PBS backup job (vzdump of all VMs/LXCs) — create or update
 EXISTING_JOB="$(pvesh get /cluster/backup --output-format json 2>/dev/null \
     | python3 -c "
