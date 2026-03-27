@@ -15,7 +15,6 @@ pipeline {
     options {
         disableConcurrentBuilds()
         timestamps()
-        lock('ci-vm-x86')
     }
 
     triggers {
@@ -34,6 +33,10 @@ pipeline {
     }
 
     stages {
+
+        stage('Run') {
+            options { lock('ci-vm-x86') }
+            stages {
 
         stage('Clone VM') {
             steps {
@@ -260,6 +263,9 @@ ENDSSH
                 """
             }
         }
+
+            } // stages
+        } // stage Run
 
     } // stages
 
