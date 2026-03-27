@@ -15,7 +15,7 @@
 - [Supported Platforms](#supported-platforms)
 - [Repository Layout](#repository-layout)
 - [Before You Start](#before-you-start)
-- [Setup (all users)](#setup-all-users)
+- [Setup](#setup)
 - [Fresh Installation](#fresh-installation)
 - [Disaster Recovery](#disaster-recovery)
 - [Backup Schedule and Retention](#backup-schedule-and-retention)
@@ -213,7 +213,7 @@ Minimum variables to set:
 
 ---
 
-## Setup (all users)
+## Setup
 
 Steps 1–3 are the same regardless of whether you are doing a fresh installation or a disaster recovery.
 
