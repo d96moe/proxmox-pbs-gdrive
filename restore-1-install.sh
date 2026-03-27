@@ -69,15 +69,16 @@ _arm64_check_compat() {
 
     # Find the minimum proxmox-backup-client version required by this PVE build.
     # PVE declares this via libpve-storage-perl (the backup API module).
+    # Note: grep returning 1 (no match) must not kill the script under set -euo pipefail.
     pbc_min="$(apt-cache show proxmox-ve 2>/dev/null \
         | grep "^Depends:" | tr ',' '\n' \
         | grep 'proxmox-backup-client' \
-        | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1)"
+        | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1 || true)"
     if [ -z "${pbc_min}" ]; then
         pbc_min="$(apt-cache show libpve-storage-perl 2>/dev/null \
             | grep "^Depends:" | tr ',' '\n' \
             | grep 'proxmox-backup-client' \
-            | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1)"
+            | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1 || true)"
     fi
 
     if [ -n "${pbc_min}" ] && [ -n "${pbc_cand}" ]; then
@@ -114,12 +115,12 @@ _arm64_check_compat() {
             req="$(apt-cache show "proxmox-ve=${candidate_pve}" 2>/dev/null \
                 | grep "^Depends:" | tr ',' '\n' \
                 | grep 'proxmox-backup-client' \
-                | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1)"
+                | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1 || true)"
             # If this older PVE has no direct dep, check libpve-storage-perl of same version
             [ -z "${req}" ] && req="$(apt-cache show "libpve-storage-perl" 2>/dev/null \
                 | grep "^Depends:" | tr ',' '\n' \
                 | grep 'proxmox-backup-client' \
-                | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1)"
+                | grep -oE '>= [^ )]+' | awk '{print $2}' | head -1 || true)"
             if [ -n "${req}" ] && [ -n "${pbc_cand}" ] \
                 && dpkg --compare-versions "${pbc_cand}" ge "${req}"; then
                 echo "  Found compatible pxvirt: ${candidate_pve} (needs backup-client >= ${req}, pipbs has ${pbc_cand})"
