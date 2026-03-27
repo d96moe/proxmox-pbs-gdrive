@@ -136,18 +136,17 @@ backup-pve-config.sh (nightly at 04:00)
 
 ```
 proxmox-backup-restore/
-├── restore-1-install.sh      # Scenario A step 1: install PBS, rclone, restic, resticprofile
+├── restore-1-install.sh      # Scenario A: install PBS, rclone, restic, resticprofile
 ├── restore-2-auth.sh         # Scenario B step 1: restore rclone auth + PVE config from GDrive
 ├── restore-3-pve.sh          # Scenario B step 2: wire PBS into PVE, restore LXC from snapshot
-├── restore-4-gdrive.sh       # Scenario A step 2: configure rclone GDrive auth
 ├── config.env.example        # Template — copy to config.env and fill in your values
 ├── scripts/
-│   ├── backup-restic-vms.sh  # Nightly restic backup of PBS datastore to GDrive
-│   │                         # Installed to /usr/local/bin/ by restore-3-pve.sh
-│   │                         # Runs as systemd service (restic-backup.timer)
-│   └── backup-pve-config.sh  # Daily PVE config backup (config.db, /etc/pve, rclone token, etc.)
-│                             # Installed to /usr/local/bin/ by restore-1-install.sh
-│                             # Runs as systemd service (pve-config-backup.timer)
+│   ├── backup-pve-config.sh  # Daily PVE config backup (config.db, /etc/pve, rclone token, etc.)
+│   │                         # Installed to /usr/local/bin/ by restore-1-install.sh
+│   │                         # Runs as systemd service (pve-config-backup.timer)
+│   └── backup-restic-vms.sh  # Nightly restic backup of PBS datastore to GDrive
+│                             # Installed to /usr/local/bin/ by restore-3-pve.sh
+│                             # Runs as systemd service (restic-backup.timer)
 └── ci/                       # CI pipeline — not needed for normal use
     ├── Jenkinsfile.*         # Jenkins pipeline definitions
     ├── config_ci*.env        # CI-specific config templates
