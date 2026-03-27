@@ -30,8 +30,9 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMo
 IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
 IMAGE_PATH="/var/lib/vz/template/iso/debian-12-genericcloud-amd64.qcow2"
 
-# Jenkins SSH pubkey — from Jenkins agent key on this host
-JENKINS_PUBKEY_FILE="/var/lib/jenkins/.ssh/id_ed25519.pub"
+# Jenkins SSH pubkey — copy from LXC 200 before running this script:
+#   pct exec 200 -- cat /var/lib/jenkins/.ssh/id_ed25519.pub > /root/.ssh/jenkins_ci.pub
+JENKINS_PUBKEY_FILE="/root/.ssh/jenkins_ci.pub"
 [ -f "${JENKINS_PUBKEY_FILE}" ] || { echo "ERROR: Jenkins pubkey not found at ${JENKINS_PUBKEY_FILE}"; exit 1; }
 
 # =============================================================================

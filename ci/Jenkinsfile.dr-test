@@ -1,7 +1,7 @@
 // =============================================================================
 // Jenkinsfile.dr-test  —  Scenario B: Disaster Recovery CI Pipeline
 //
-// Weekly (Sunday 04:00) + manual trigger.
+// Weekly (Sunday 22:00) + manual trigger.
 // Prerequisite: at least one restic snapshot must exist in bu/ci-restore-test
 // (produced by Jenkinsfile.restore-test / Scenario A).
 //
@@ -25,7 +25,7 @@ pipeline {
     }
 
     triggers {
-        cron('H 4 * * 0')
+        cron('H 22 * * 0')
     }
 
     environment {

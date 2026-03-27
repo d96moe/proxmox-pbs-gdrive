@@ -514,6 +514,7 @@ apt_get update -qq
 # Before running 'apt upgrade', always check that both pxvirt and pipbs
 # have released matching versions first. See README.md for upgrade guidance.
 if [ "${ARCH}" = "aarch64" ]; then
+    PVE_VER="$(dpkg-query -W -f='${Version}' proxmox-ve 2>/dev/null | cut -d. -f1,2)"
     PBS_VER="$(dpkg-query -W -f='${Version}' proxmox-backup-server 2>/dev/null | cut -d. -f1,2)"
     echo "  Installed: proxmox-ve=${PVE_VER}  proxmox-backup-server=${PBS_VER}"
     if [ "${PVE_VER}" != "${PBS_VER}" ]; then

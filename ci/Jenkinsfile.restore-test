@@ -1,7 +1,7 @@
 // =============================================================================
 // Jenkinsfile.restore-test  —  Scenario A: Install + Backup CI Pipeline
 //
-// Nightly (03:00) + manual trigger.
+// Nightly (22:00) + manual trigger.
 // Clones template 9001, installs PBS via restore-1-install.sh, creates a test
 // LXC, takes a PBS snapshot, backs it up to Google Drive with restic, then
 // verifies at least one snapshot exists in the remote repository.
@@ -18,7 +18,7 @@ pipeline {
     }
 
     triggers {
-        cron('H 3 * * *')
+        cron('H 22 * * *')
     }
 
     environment {
