@@ -63,19 +63,44 @@ else
         --prune-backups "${PBS_RETENTION_LOCAL}"
 fi
 
-echo "=== Step 6: Set PBS prune and GC schedules ==="
-# prune is a separate prune-job, NOT a datastore-level setting
+echo "=== Step 6: Set PBS backup, prune and GC schedules ==="
+# PBS backup job (vzdump of all VMs/LXCs) — create or update
+EXISTING_JOB="$(pvesh get /cluster/backup --output-format json 2>/dev/null \
+    | python3 -c "
+import sys,json
+jobs=json.load(sys.stdin)
+for j in jobs:
+    if j.get('storage')=='${PVE_PBS_STORAGE_ID}':
+        print(j['id']); break
+" 2>/dev/null || true)"
+
+if [ -n "${EXISTING_JOB}" ]; then
+    echo "  Backup job ${EXISTING_JOB} already exists — updating schedule to ${PBS_BACKUP_SCHEDULE}"
+    pvesh set /cluster/backup/${EXISTING_JOB} --schedule "${PBS_BACKUP_SCHEDULE}"
+else
+    pvesh create /cluster/backup \
+        --all 1 \
+        --storage ${PVE_PBS_STORAGE_ID} \
+        --mode snapshot \
+        --compress zstd \
+        --schedule "${PBS_BACKUP_SCHEDULE}"
+    echo "  Created backup job — schedule: ${PBS_BACKUP_SCHEDULE}"
+fi
+
+# PBS prune job (separate prune-job, NOT a datastore-level setting)
 proxmox-backup-manager prune-job create nightly-prune \
     --store ${PBS_DATASTORE_NAME} \
     --schedule "${PBS_PRUNE_SCHEDULE}" \
     --keep-last 3 2>/dev/null || \
 proxmox-backup-manager prune-job update nightly-prune \
     --schedule "${PBS_PRUNE_SCHEDULE}"
+
+# PBS garbage collection
 proxmox-backup-manager datastore update ${PBS_DATASTORE_NAME} \
     --gc-schedule "${PBS_GC_SCHEDULE}"
 
 echo "=== Step 7: Install restic backup script + systemd timer ==="
-# Order: PBS BU (02:00) → PBS Prune (03:00) → PBS GC (03:30) → restic backup+forget (RESTIC_BACKUP_SCHEDULE)
+# Order: PBS backup → PBS prune → PBS GC → restic backup+forget
 # The script stops PBS, snapshots the clean post-prune datastore (tagged per VM/LXC),
 # runs forget/prune for Google Drive retention, then restarts PBS.
 

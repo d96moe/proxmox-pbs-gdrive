@@ -420,7 +420,7 @@ All schedules and retention values are configured in `config.env`.
 
 **Why this order:** prune removes index entries but doesn't free disk space immediately. GC runs after prune and actually frees the chunks. restic runs after GC to snapshot the clean post-prune datastore. Config backup runs last.
 
-> ℹ️ PBS backup schedule (`PBS_BACKUP_SCHEDULE`) is not wired into the scripts — configure it in PVE GUI under Datacenter → Backup. All other schedules are set automatically by `restore-3-pve.sh`.
+> ℹ️ All schedules are set automatically by `restore-3-pve.sh`. The PBS backup job can be adjusted afterwards in the PVE GUI under Datacenter → Backup.
 
 | Storage | Retention variable(s) | Default |
 |---|---|---|
