@@ -108,6 +108,11 @@ ENDSSH
                         "cat /etc/resticprofile/restic-password" | \
                     ssh ${SSH_OPTS} root@${VM_IP} \
                         "cat > /etc/resticprofile/restic-password"
+
+                    ssh ${SSH_OPTS} root@${PVE_HOST} \
+                        "cat /etc/resticprofile/config-encrypt-password" | \
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "cat > /etc/resticprofile/config-encrypt-password"
                 """
             }
         }

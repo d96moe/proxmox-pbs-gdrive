@@ -29,6 +29,7 @@ source "${CONFIG_FILE}"
 GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}"
 TIMESTAMP=$(date +%Y-%m-%d)
 TARBALL="/tmp/pve-config-${TIMESTAMP}.tar.gz"
+ENCRYPTED="${TARBALL}.enc"
 
 echo "=== Backing up Proxmox host config to Google Drive ==="
 echo "    Destination: ${GDRIVE_CONFIG_PATH}"
@@ -58,12 +59,17 @@ tar -czf "${TARBALL}" \
 
 echo "    Tarball size: $(du -sh ${TARBALL} | cut -f1)"
 
-# Upload to Google Drive
-rclone copy "${TARBALL}" "${GDRIVE_CONFIG_PATH}/"
-echo "    Uploaded: pve-config-${TIMESTAMP}.tar.gz"
-
-# Clean up local temp file
+# Encrypt tarball before upload
+openssl enc -aes-256-cbc -pbkdf2 \
+    -in "${TARBALL}" -out "${ENCRYPTED}" \
+    -pass file:"${CONFIG_ENCRYPT_PASSWORD_FILE}"
 rm -f "${TARBALL}"
+echo "    Encrypted: pve-config-${TIMESTAMP}.tar.gz.enc"
+
+# Upload to Google Drive
+rclone copy "${ENCRYPTED}" "${GDRIVE_CONFIG_PATH}/"
+echo "    Uploaded: pve-config-${TIMESTAMP}.tar.gz.enc"
+rm -f "${ENCRYPTED}"
 
 # Prune config tarballs: keep only dates that match a live restic snapshot.
 # restic forget has already run before this script (04:30 vs 05:00), so the
@@ -91,10 +97,10 @@ if [ -z "${RESTIC_DATES}" ]; then
 else
     KEEP_DATES="${RESTIC_DATES}"$'\n'"${TIMESTAMP}"
 
-    rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" \
+    rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz.enc" \
         | while read -r fname; do
             fdate="${fname#pve-config-}"
-            fdate="${fdate%.tar.gz}"
+            fdate="${fdate%.tar.gz.enc}"
             if ! printf '%s\n' ${KEEP_DATES} | grep -qx "${fdate}"; then
                 echo "    Removing: ${fname} (no matching restic snapshot)"
                 rclone delete "${GDRIVE_CONFIG_PATH}/${fname}"

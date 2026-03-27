@@ -203,6 +203,7 @@ All configuration lives in `config.env`. Copy the template for your platform and
 | `RESTICPROFILE_GDRIVE_REMOTE` | `gdrive` | rclone remote name — must match the name you give the remote in `rclone config`. |
 | `RESTICPROFILE_GDRIVE_PATH` | `bu/proxmox_backup` | Google Drive path for the restic repository. |
 | `RESTIC_PASSWORD_FILE` | `/etc/resticprofile/restic-password` | Path to the file containing the restic encryption password. |
+| `CONFIG_ENCRYPT_PASSWORD_FILE` | `/etc/resticprofile/config-encrypt-password` | Path to the file containing the password used to encrypt config tarballs before upload to Google Drive. |
 
 ### PVE Config Backup
 
@@ -377,6 +378,9 @@ rclone lsd gdrive:bu
 ```bash
 echo 'YOUR-RESTIC-PASSWORD' > /etc/resticprofile/restic-password
 chmod 600 /etc/resticprofile/restic-password
+
+echo 'YOUR-CONFIG-ENCRYPT-PASSWORD' > /etc/resticprofile/config-encrypt-password
+chmod 600 /etc/resticprofile/config-encrypt-password
 
 source /etc/proxmox-backup-restore/config.env
 restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \

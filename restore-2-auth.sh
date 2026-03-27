@@ -31,7 +31,7 @@ GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}"
 echo "=== Step 1: Restore PVE host config ==="
 
 # --- Path A: local tar already on disk (manual DR: downloaded via browser + scp) ---
-LOCAL_TAR=$(ls /tmp/pve-config-*.tar.gz 2>/dev/null | sort -r | head -1 || true)
+LOCAL_TAR=$(ls /tmp/pve-config-*.tar.gz.enc /tmp/pve-config-*.tar.gz 2>/dev/null | sort -r | head -1 || true)
 
 if [ -n "${LOCAL_TAR}" ]; then
     echo "Found local config backup: ${LOCAL_TAR}"
@@ -43,7 +43,9 @@ else
     rclone lsd ${RESTICPROFILE_GDRIVE_REMOTE}:bu
     echo "rclone OK"
 
-    LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1) || LATEST_CONFIG=""
+    LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz.enc" 2>/dev/null | sort -r | head -1) || LATEST_CONFIG=""
+    # Fall back to unencrypted for backward compatibility
+    [ -z "${LATEST_CONFIG}" ] && LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1) || true
     if [ -z "${LATEST_CONFIG}" ]; then
         if [ "${CI:-}" = "true" ]; then
             echo "ERROR: CI mode — expected a config backup in ${GDRIVE_CONFIG_PATH} but none found."
@@ -62,6 +64,25 @@ else
 fi
 
 if [ -n "${CONFIG_TAR}" ]; then
+    # Decrypt if encrypted
+    if [[ "${CONFIG_TAR}" == *.enc ]]; then
+        DECRYPTED="${CONFIG_TAR%.enc}"
+        echo "Decrypting config tarball..."
+        if [ -f "${CONFIG_ENCRYPT_PASSWORD_FILE:-}" ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 \
+                -in "${CONFIG_TAR}" -out "${DECRYPTED}" \
+                -pass file:"${CONFIG_ENCRYPT_PASSWORD_FILE}"
+        else
+            read -s -p "Config tarball encryption password: " _enc_pass
+            echo
+            printf '%s' "${_enc_pass}" | openssl enc -d -aes-256-cbc -pbkdf2 \
+                -in "${CONFIG_TAR}" -out "${DECRYPTED}" -pass stdin
+            unset _enc_pass
+        fi
+        rm -f "${CONFIG_TAR}"
+        CONFIG_TAR="${DECRYPTED}"
+    fi
+
     echo "Extracting config..."
     # /etc/pve is a pmxcfs FUSE filesystem — the authoritative data is
     # /var/lib/pve-cluster/config.db; pmxcfs regenerates /etc/pve from it
