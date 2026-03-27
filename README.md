@@ -194,7 +194,6 @@ All configuration lives in `config.env`. Copy the template for your platform and
 | `RESTIC_RETENTION_KEEP_DAILY` | `3` | restic: keep one snapshot per day for this many days. |
 | `RESTIC_RETENTION_KEEP_WEEKLY` | `2` | restic: keep one snapshot per week for this many weeks. |
 | `RESTIC_RETENTION_KEEP_MONTHLY` | `3` | restic: keep one snapshot per month for this many months. |
-| `CONFIG_KEEP_DAYS` | `7` | How many days to keep PVE config tarballs on Google Drive. |
 
 ### Restic / rclone / Google Drive
 
