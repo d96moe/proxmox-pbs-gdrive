@@ -14,7 +14,6 @@
 - [How It Works](#how-it-works)
 - [Supported Platforms](#supported-platforms)
 - [Repository Layout](#repository-layout)
-- [Before You Start](#before-you-start)
 - [Setup](#setup)
 - [Fresh Installation](#fresh-installation)
 - [Disaster Recovery](#disaster-recovery)
@@ -158,64 +157,14 @@ The two scripts under `scripts/` are **helper scripts installed onto your Proxmo
 
 ---
 
-## Before You Start
-
-### 0. Prerequisites
-
-Before running any scripts, make sure you have:
-
-- A **Google account** with Google Drive — this is where all offsite backups land
-- **Enough Google Drive space** — plan for roughly 1.5× the size of your PBS datastore (the initial upload is the full datastore; incremental snapshots grow it slowly after that)
-- **Root SSH access** to your Proxmox node
-- A **dedicated partition** for PBS (see below) — this must be prepared before running any scripts
-- A **restic password** — pick one and store it in a password manager before you start. You cannot recover your Google Drive backups without it.
-
-### 1. Create a dedicated PBS partition
-
-PBS should have its own dedicated partition. It can technically run on a shared partition, but it's strongly discouraged: if anything else (OS, VMs, logs) fills the disk, PBS backups fail. Keeping it separate also makes it easy to see exactly how much space backups are consuming.
-
-**Size:** depends on how many VMs/LXCs you have and how large they are. PBS deduplicates aggressively so the datastore is often much smaller than the sum of VM sizes — but leave headroom. The script will warn (not fail) if the partition is smaller than 15% of the total disk.
-
-**The script does not create or format the partition — you must do this manually before running `restore-1-install.sh`.** The script will verify the partition exists and is a block device, but will exit with an error if it doesn't.
-
-```bash
-# Example: create partition on /dev/sda
-parted /dev/sda mkpart primary ext4 <start>s <end>s
-mkfs.ext4 -m 0 /dev/sda3   # -m 0: no reserved blocks (only useful on root partition)
-
-# Get UUID for config.env
-blkid /dev/sda3
-```
-
-> ⚠️ Format with the **default inode ratio** — do NOT use `-T largefile4`. PBS stores data as millions of small 64 KB chunk files. `largefile4` sets 4 MB per inode, leaving far too few inodes for the chunk store.
-
-`restore-1-install.sh` will verify the partition, mount it, and add it to `/etc/fstab` automatically.
-
-### 2. Edit config.env
-
-All scripts source a single `config.env`. Start from a template:
-
-```bash
-cp config_x86_standard.env config.env   # x86_64
-cp config_rpi5.env config.env           # Raspberry Pi 5 (aarch64)
-nano config.env
-```
-
-Minimum variables to set:
-
-| Variable | Description |
-|---|---|
-| `PBS_PARTITION` | Dedicated PBS partition, e.g. `/dev/sda3` or `/dev/nvme0n1p4` |
-| `PBS_USER_PASSWORD` | Set a strong password — or skip editing and `export PBS_USER_PASSWORD=...` before running the script |
-| `RESTICPROFILE_GDRIVE_REMOTE` | rclone remote name (must match what you configure in rclone) |
-| `RESTICPROFILE_GDRIVE_PATH` | Google Drive path for restic repo |
-| `GDRIVE_CONFIG_FOLDER` | Google Drive folder for config tarballs |
-
----
-
 ## Setup
 
-Steps 1–3 are the same regardless of whether you are doing a fresh installation or a disaster recovery.
+Before starting, make sure you have:
+- A **Google account** with enough Drive space — roughly 1.5× your PBS datastore size
+- A **restic password** chosen and stored in a password manager — you cannot recover GDrive backups without it
+- **Root SSH access** to your Proxmox node
+
+Steps 1–3 are the same for both fresh installations and disaster recovery.
 
 ### Step 1: Install Proxmox VE and clone repo
 
@@ -230,6 +179,16 @@ cd proxmox-backup-restore
 cp config_x86_standard.env config.env
 nano config.env
 ```
+
+Minimum variables to set in `config.env`:
+
+| Variable | Description |
+|---|---|
+| `PBS_PARTITION` | Dedicated PBS partition, e.g. `/dev/sda3` or `/dev/nvme0n1p4` |
+| `PBS_USER_PASSWORD` | Set a strong password — or `export PBS_USER_PASSWORD=...` before running the script |
+| `RESTICPROFILE_GDRIVE_REMOTE` | rclone remote name (must match what you configure in rclone) |
+| `RESTICPROFILE_GDRIVE_PATH` | Google Drive path for restic repo |
+| `GDRIVE_CONFIG_FOLDER` | Google Drive folder for config tarballs |
 
 **aarch64 (Raspberry Pi 5):**
 
@@ -253,7 +212,18 @@ The script sets hostname, configures the network bridge, adds the pxvirt repo, i
 
 ### Step 2: Create PBS partition
 
-See [Before You Start → Create a dedicated PBS partition](#1-create-a-dedicated-pbs-partition).
+PBS needs its own dedicated partition — if anything else fills the disk, backups fail. Size depends on your VMs/LXCs; PBS deduplicates aggressively so the datastore is often much smaller than the sum of VM sizes, but leave headroom.
+
+**The script does not create the partition** — you must do this manually before running `restore-1-install.sh`:
+
+```bash
+parted /dev/sda mkpart primary ext4 <start>s <end>s
+mkfs.ext4 -m 0 /dev/sda3
+```
+
+> ⚠️ Use the **default inode ratio** — do NOT use `-T largefile4`. PBS stores millions of small 64 KB chunk files and will exhaust inodes with large-file tuning.
+
+`restore-1-install.sh` verifies the partition, mounts it, and adds it to `/etc/fstab` automatically.
 
 ### Step 3: Install PBS and backup tools
 
