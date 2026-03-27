@@ -7,6 +7,7 @@
 - [Test Infrastructure](#test-infrastructure)
 - [What ShellSpec Tests Verify](#what-shellspec-tests-verify)
 - [Jenkins Setup](#jenkins-setup)
+- [Credentials and Secrets](#credentials-and-secrets)
 - [Running ShellSpec Locally](#running-shellspec-locally)
 
 ---
@@ -191,6 +192,23 @@ Downloads a Debian Bookworm x86_64 cloud image, creates a VM with a 16 GB OS dis
 ```
 
 This installs AAVMF arm64 UEFI firmware, downloads a vanilla Debian Trixie arm64 cloud image, creates a QEMU VM with `--arch aarch64` for full emulation, and converts it to a template. No Pi 5 or separate arm64 hardware required.
+
+---
+
+## Credentials and Secrets
+
+**Nothing sensitive is stored in this repository.**
+
+| What | Where it lives | How CI gets it |
+|---|---|---|
+| rclone OAuth token (`rclone.conf`) | `/root/.config/rclone/rclone.conf` on the PVE host | Piped live over SSH from PVE host to CI VM during `Copy credentials` stage |
+| restic repository password | `/etc/resticprofile/restic-password` on the PVE host | Same — piped live over SSH |
+| PBS user password | `ci/config_ci.env` (placeholder value only) | Read from config file on the CI VM |
+| SSH private key | Inside LXC 200 at `/var/lib/jenkins/.ssh/id_ed25519` | Jenkins credential store — never in git |
+
+`config.env` (the real working config with actual passwords) is excluded via `.gitignore` and has never been committed. The files in `ci/config_ci.env` and `ci/config_ci_arm64.env` contain only placeholder values — no real passwords or tokens.
+
+The rclone OAuth token gives access to Google Drive and never touches the repository — it is streamed directly between two SSH sessions by Jenkins at build time and exists only in memory and on the CI VM's filesystem for the duration of the build.
 
 ---
 
