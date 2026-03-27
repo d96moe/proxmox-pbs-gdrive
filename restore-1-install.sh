@@ -36,9 +36,14 @@ systemctl stop apt-daily.timer apt-daily-upgrade.timer \
     unattended-upgrades 2>/dev/null || true
 pkill -x apt-get 2>/dev/null || true
 sleep 2
-# Remove dpkg/apt lock files and fix any interrupted dpkg state
+# Remove dpkg/apt lock files and fix any interrupted dpkg state.
+# Only run dpkg --configure -a when PVE is already installed (pvesh present).
+# On arm64 Step 0, the template may have partially installed PVE packages;
+# configuring them would restart services and break the SSH session.
 rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null || true
-dpkg --configure -a 2>/dev/null || true
+if command -v pvesh &>/dev/null; then
+    dpkg --configure -a 2>/dev/null || true
+fi
 # Remove potentially corrupted binary cache files (left by killed apt-daily)
 rm -f /var/cache/apt/pkgcache.bin /var/cache/apt/srcpkgcache.bin
 
