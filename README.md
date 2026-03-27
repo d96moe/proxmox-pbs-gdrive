@@ -208,7 +208,8 @@ All configuration lives in `config.env`. Copy the template for your platform and
 | Variable | Default | Description |
 |---|---|---|
 | `GDRIVE_CONFIG_FOLDER` | `proxmox_backup_config` | Google Drive folder where daily config tarballs are stored. |
-| `CONFIG_KEEP_DAYS` | `90` | Days to retain config tarballs on Google Drive. Should cover the full restic retention window so a matching tarball exists for every restic snapshot you might restore from. |
+
+Config tarballs are pruned automatically to match restic snapshot dates — every kept tarball has a corresponding restic snapshot to restore from, and no more.
 
 ### Backup Schedules
 

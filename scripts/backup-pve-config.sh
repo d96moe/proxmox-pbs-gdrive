@@ -13,7 +13,8 @@
 #   - /usr/local/bin/    Our custom scripts
 #   - /boot/firmware/config.txt  Pi5 kernel config (4k page-size setting)
 #
-# Keeps last CONFIG_KEEP_DAYS config backups on Google Drive.
+# Prunes config tarballs to match restic snapshot dates — so every kept
+# tarball has a corresponding restic snapshot to restore from.
 # =============================================================================
 
 set -euo pipefail
@@ -64,14 +65,41 @@ echo "    Uploaded: pve-config-${TIMESTAMP}.tar.gz"
 # Clean up local temp file
 rm -f "${TARBALL}"
 
-# Remove old backups from Google Drive (keep last CONFIG_KEEP_DAYS)
-echo "    Pruning old backups (keeping last ${CONFIG_KEEP_DAYS})..."
-rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" \
-    | sort -r \
-    | tail -n +$(( CONFIG_KEEP_DAYS + 1 )) \
-    | while read -r old_file; do
-        echo "    Removing old backup: ${old_file}"
-        rclone delete "${GDRIVE_CONFIG_PATH}/${old_file}"
-    done
+# Prune config tarballs: keep only dates that match a live restic snapshot.
+# restic forget has already run before this script (04:30 vs 05:00), so the
+# snapshot list reflects the final retention policy.
+# Always keep today's tarball even if the restic query fails or today's
+# snapshot hasn't landed yet.
+echo "    Pruning config tarballs to match restic snapshot dates..."
+
+RESTIC_DATES=$(restic \
+    --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \
+    --password-file "${RESTIC_PASSWORD_FILE}" \
+    --no-lock \
+    snapshots --json 2>/dev/null \
+  | python3 -c "
+import sys, json
+try:
+    snapshots = json.load(sys.stdin)
+    dates = {s['time'][:10] for s in snapshots}
+    print('\n'.join(sorted(dates)))
+except Exception:
+    pass" 2>/dev/null || true)
+
+if [ -z "${RESTIC_DATES}" ]; then
+    echo "    WARNING: could not query restic snapshots — skipping tarball prune"
+else
+    KEEP_DATES="${RESTIC_DATES}"$'\n'"${TIMESTAMP}"
+
+    rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" \
+        | while read -r fname; do
+            fdate="${fname#pve-config-}"
+            fdate="${fdate%.tar.gz}"
+            if ! printf '%s\n' ${KEEP_DATES} | grep -qx "${fdate}"; then
+                echo "    Removing: ${fname} (no matching restic snapshot)"
+                rclone delete "${GDRIVE_CONFIG_PATH}/${fname}"
+            fi
+        done
+fi
 
 echo "=== Proxmox config backup complete ==="
