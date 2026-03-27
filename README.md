@@ -14,10 +14,10 @@
 - [How It Works](#how-it-works)
 - [Supported Platforms](#supported-platforms)
 - [Repository Layout](#repository-layout)
-- [Which Scenario Applies to You?](#which-scenario-applies-to-you)
 - [Before You Start](#before-you-start)
-- [Scenario A: Fresh Setup](#scenario-a-fresh-setup)
-- [Scenario B: Disaster Recovery](#scenario-b-disaster-recovery)
+- [Setup (all users)](#setup-all-users)
+- [Fresh Installation](#fresh-installation)
+- [Disaster Recovery](#disaster-recovery)
 - [Backup Schedule and Retention](#backup-schedule-and-retention)
 - [Verify Backup Health](#verify-backup-health)
 - [Troubleshooting](#troubleshooting)
@@ -136,9 +136,9 @@ backup-pve-config.sh (nightly at 04:00)
 
 ```
 proxmox-backup-restore/
-├── restore-1-install.sh      # Scenario A: install PBS, rclone, restic, resticprofile
-├── restore-2-auth.sh         # Scenario B step 1: restore rclone auth + PVE config from GDrive
-├── restore-3-pve.sh          # Scenario B step 2: wire PBS into PVE, restore LXC from snapshot
+├── restore-1-install.sh      # Setup step 3: install PBS, rclone, restic, resticprofile
+├── restore-2-auth.sh         # DR step 5: restore rclone auth + PVE config from GDrive
+├── restore-3-pve.sh          # Fresh step 6 / DR step 6: wire PBS into PVE
 ├── config.env.example        # Template — copy to config.env and fill in your values
 ├── scripts/
 │   ├── backup-pve-config.sh  # Daily PVE config backup (config.db, /etc/pve, rclone token, etc.)
@@ -155,15 +155,6 @@ proxmox-backup-restore/
 ```
 
 The two scripts under `scripts/` are **helper scripts installed onto your Proxmox host** by the main restore scripts — they are not CI-only. They run on a schedule after setup and are what keeps your backups going day-to-day.
-
----
-
-## Which Scenario Applies to You?
-
-| Situation | Use |
-|---|---|
-| Setting up a new Proxmox node with no existing backups | [Scenario A](#scenario-a-fresh-setup) |
-| Replacing failed hardware, you have backups in Google Drive | [Scenario B](#scenario-b-disaster-recovery) |
 
 ---
 
@@ -222,11 +213,11 @@ Minimum variables to set:
 
 ---
 
-## Scenario A: Fresh Setup
+## Setup (all users)
 
-Use this when setting up a new Proxmox node with no existing backups.
+Steps 1–3 are the same regardless of whether you are doing a fresh installation or a disaster recovery.
 
-### A0: Install Proxmox VE and clone repo
+### Step 1: Install Proxmox VE and clone repo
 
 **x86_64:**
 1. Download and install Proxmox VE from https://www.proxmox.com/downloads
@@ -256,15 +247,15 @@ nano config.env   # set PVE_HOSTNAME, PVE_IP, PVE_GATEWAY, PVE_IFACE, PBS_PARTIT
 ./restore-1-install.sh
 ```
 
-The script sets hostname, configures the network bridge, adds the pxvirt repo, installs Proxmox VE, switches to the 4k kernel (required for PBS on Pi5), and reboots. Run it again after reboot to install PBS and all backup tools. GUI available at `https://<IP>:8006`.
+The script sets hostname, configures the network bridge, adds the pxvirt repo, installs Proxmox VE, switches to the 4k kernel (required for PBS on Pi5), and reboots. Run it again after reboot to complete the install. GUI available at `https://<IP>:8006`.
 
 > ⚠️ Do NOT run `apt upgrade` without checking for pxvirt/pipbs version conflicts first.
 
-### A1: Create PBS partition
+### Step 2: Create PBS partition
 
 See [Before You Start → Create a dedicated PBS partition](#1-create-a-dedicated-pbs-partition).
 
-### A2: Install PBS and backup tools
+### Step 3: Install PBS and backup tools
 
 ```bash
 ./restore-1-install.sh
@@ -280,7 +271,17 @@ This will:
 
 > ⚠️ **Raspberry Pi 5:** If the Pi is running a 16k page-size kernel (incompatible with PBS), the script detects this, offers to fix it, and reboots. Run the script again after reboot.
 
-### A3: Configure rclone (Google Drive OAuth)
+---
+
+> **After Step 3 the paths diverge** — continue with [Fresh Installation](#fresh-installation) if this is a new node, or [Disaster Recovery](#disaster-recovery) if you are restoring from existing backups.
+
+---
+
+## Fresh Installation
+
+Use this when setting up a new Proxmox node with no existing backups.
+
+### Step 4: Configure rclone (Google Drive OAuth)
 
 #### One-time: create Google OAuth credentials
 
@@ -327,7 +328,7 @@ Verify:
 rclone lsd gdrive:bu
 ```
 
-### A4: Init restic repository and save password
+### Step 5: Init restic repository and save password
 
 ```bash
 echo 'YOUR-RESTIC-PASSWORD' > /etc/resticprofile/restic-password
@@ -340,7 +341,7 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
 
 > ⚠️ Store this password in a password manager — losing it means losing access to all Google Drive backups.
 
-### A5: Wire PBS into PVE and activate schedules
+### Step 6: Wire PBS into PVE and activate schedules
 
 ```bash
 ./restore-3-pve.sh
@@ -348,7 +349,7 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
 
 Adds PBS as PVE storage and activates the nightly restic backup schedule.
 
-### A6: Run first manual backup
+### Step 7: Run first manual backup
 
 ```bash
 # PBS backup of all VMs/LXCs
@@ -362,48 +363,26 @@ resticprofile backup
 
 ---
 
-## Scenario B: Disaster Recovery
+## Disaster Recovery
 
-Use this when replacing failed hardware. You already have backups in Google Drive.
+Use this when replacing failed hardware with backups already in Google Drive.
 
-**Prerequisite:** Scenario A must have completed at least once on the old hardware. You need:
-- At least one restic snapshot in Google Drive (from a previous Scenario A run)
+**Prerequisites:**
+- At least one restic snapshot in Google Drive
 - At least one config tarball (`pve-config-YYYY-MM-DD.tar.gz`) in Google Drive
-- Access to Google Drive from a browser (to download the tarball in step B3)
+- Access to Google Drive from a browser
 
-### How it works
-
-The nightly config tarball (`pve-config-backup.timer`) contains:
+The nightly config tarball contains:
 - `/var/lib/pve-cluster/config.db` — PVE cluster database (all VM/LXC configs, storage config, ACLs)
 - `/root/.config/rclone/` — rclone OAuth token for Google Drive
 - `/etc/resticprofile/` — restic profiles and password file
 - `/etc/fstab`, network config, custom scripts
 
-Restoring this tarball on new hardware gives you back rclone auth, the restic password, and the full PVE configuration — no manual reclone/restic reconfiguration needed.
+Restoring this tarball on new hardware gives you back rclone auth, the restic password, and the full PVE config — no manual rclone/restic reconfiguration needed.
 
 > ⚠️ **Match your tar and restic snapshot dates.** Pick a config tar and restic snapshot from the **same night**. The tar is named `pve-config-YYYY-MM-DD.tar.gz`. Mixing dates means your PVE config will reference VMs that don't exist in the restored PBS datastore, or vice versa.
 
-### B0: Install Proxmox VE
-
-Same as [A0](#a0-install-proxmox-ve).
-
-### B1: Create PBS partition
-
-Same as [A1](#a1-create-pbs-partition) — create a dedicated partition on the new hardware.
-
-### B2: Clone repo, configure, and run restore-1-install.sh
-
-```bash
-apt-get install -y git
-git clone https://github.com/d96moe/proxmox-backup-restore.git
-cd proxmox-backup-restore
-chmod +x *.sh
-cp config_x86_standard.env config.env   # or config_rpi5.env
-nano config.env                         # verify PBS_PARTITION matches new hardware
-./restore-1-install.sh
-```
-
-### B3: Download config tarball
+### Step 4: Download config tarball
 
 On any machine with a browser:
 
@@ -416,9 +395,9 @@ Copy to the PVE server:
 scp pve-config-YYYY-MM-DD.tar.gz root@YOUR-PVE-IP:/tmp/
 ```
 
-> ℹ️ Do not extract it manually. `restore-2-auth.sh` stops pve-cluster first (so the pmxcfs FUSE filesystem is unmounted), restores `config.db` and rclone auth, then restarts pve-cluster — all in the correct order.
+> ℹ️ Do not extract it manually. `restore-2-auth.sh` stops pve-cluster first, restores `config.db` and rclone auth, then restarts pve-cluster — all in the correct order.
 
-### B4: Restore config, credentials, and PBS datastore
+### Step 5: Restore config, credentials, and PBS datastore
 
 ```bash
 ./restore-2-auth.sh
@@ -433,9 +412,9 @@ The script will:
 
 > ⚠️ Downloading the PBS datastore takes several hours depending on size and connection speed.
 
-After this step, all VM/LXC configs are visible in the PVE GUI (from the restored `config.db`), and the PBS datastore is fully restored.
+After this step, all VM/LXC configs are visible in the PVE GUI and the PBS datastore is fully restored.
 
-### B5: Wire PBS into PVE
+### Step 6: Wire PBS into PVE
 
 ```bash
 ./restore-3-pve.sh
@@ -443,7 +422,7 @@ After this step, all VM/LXC configs are visible in the PVE GUI (from the restore
 
 Updates the PBS fingerprint on the storage entry already in `config.db`, starts PBS, and re-enables backup schedules.
 
-### B6: Restore VMs and LXCs
+### Step 7: Restore VMs and LXCs
 
 Your VMs/LXCs already appear in the GUI (from `config.db`). Restore them from PBS:
 
