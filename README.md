@@ -177,16 +177,6 @@ cp config_x86_standard.env config.env
 nano config.env
 ```
 
-Minimum variables to set in `config.env`:
-
-| Variable | Description |
-|---|---|
-| `PBS_PARTITION` | Dedicated PBS partition, e.g. `/dev/sda3` or `/dev/nvme0n1p4` |
-| `PBS_USER_PASSWORD` | Set a strong password — or `export PBS_USER_PASSWORD=...` before running the script |
-| `RESTICPROFILE_GDRIVE_REMOTE` | rclone remote name (must match what you configure in rclone) |
-| `RESTICPROFILE_GDRIVE_PATH` | Google Drive path for restic repo |
-| `GDRIVE_CONFIG_FOLDER` | Google Drive folder for config tarballs |
-
 **aarch64 (Raspberry Pi 5):**
 
 Proxmox is not officially supported on ARM64. `restore-1-install.sh` handles the full install automatically:
@@ -206,6 +196,16 @@ nano config.env   # set PVE_HOSTNAME, PVE_IP, PVE_GATEWAY, PVE_IFACE, PBS_PARTIT
 The script sets hostname, configures the network bridge, adds the pxvirt repo, installs Proxmox VE, switches to the 4k kernel (required for PBS on Pi5), and reboots. Run it again after reboot to complete the install. GUI available at `https://<IP>:8006`.
 
 > ⚠️ Do NOT run `apt upgrade` without checking for pxvirt/pipbs version conflicts first.
+
+Minimum variables to set in `config.env`:
+
+| Variable | Description |
+|---|---|
+| `PBS_PARTITION` | Dedicated PBS partition, e.g. `/dev/sda3` or `/dev/nvme0n1p4` |
+| `PBS_USER_PASSWORD` | Set a strong password — or `export PBS_USER_PASSWORD=...` before running the script |
+| `RESTICPROFILE_GDRIVE_REMOTE` | rclone remote name (must match what you configure in rclone) |
+| `RESTICPROFILE_GDRIVE_PATH` | Google Drive path for restic repo |
+| `GDRIVE_CONFIG_FOLDER` | Google Drive folder for config tarballs |
 
 ### Step 2: Create PBS partition
 
