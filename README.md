@@ -183,7 +183,6 @@ All configuration lives in `config.env`. Copy the template for your platform and
 | Variable | Default | Description |
 |---|---|---|
 | `PVE_PBS_STORAGE_ID` | `pbs-local` | PVE storage ID for the PBS entry (shown in Datacenter → Storage). |
-| `PVE_PBS_SERVER` | `127.0.0.1` | Address PVE uses to reach PBS. Use `127.0.0.1` when PBS and PVE run on the same node. |
 
 ### Retention
 

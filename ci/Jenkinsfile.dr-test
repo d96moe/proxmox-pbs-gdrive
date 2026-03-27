@@ -211,7 +211,7 @@ source /opt/proxmox-restore/config.env
 FINGERPRINT=\$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint (sha256):" | awk '{print \$NF}')
 PBS_PASSWORD="\${PBS_USER_PASSWORD}" PBS_FINGERPRINT="\${FINGERPRINT}" \
     proxmox-backup-client snapshots \
-    --repository "\${PBS_USER}@\${PVE_PBS_SERVER}:\${PBS_DATASTORE_NAME}" 2>&1
+    --repository "\${PBS_USER}@\127.0.0.1:\${PBS_DATASTORE_NAME}" 2>&1
 ENDSSH
 )
 

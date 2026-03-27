@@ -29,7 +29,7 @@ count_pbs_ct100_snapshots_via_client() {
     fingerprint="$(get_pbs_fingerprint)"
     PBS_PASSWORD="${PBS_USER_PASSWORD}" PBS_FINGERPRINT="${fingerprint}" \
         proxmox-backup-client snapshots \
-        --repository "${PBS_USER}@${PVE_PBS_SERVER}:${PBS_DATASTORE_NAME}" 2>&1 \
+        --repository "${PBS_USER}@127.0.0.1:${PBS_DATASTORE_NAME}" 2>&1 \
         | grep -c 'ct/' || echo '0'
 }
 

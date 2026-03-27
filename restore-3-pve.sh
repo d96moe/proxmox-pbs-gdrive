@@ -54,7 +54,7 @@ else
     pvesh create /storage \
         --storage ${PVE_PBS_STORAGE_ID} \
         --type pbs \
-        --server ${PVE_PBS_SERVER} \
+        --server 127.0.0.1 \
         --datastore ${PBS_DATASTORE_NAME} \
         --username ${PBS_USER} \
         --password "${PBS_USER_PASSWORD}" \
@@ -143,7 +143,7 @@ systemctl enable --now restic-backup.timer
 echo "=== Step 9: Verify snapshots visible in PBS ==="
 PBS_PASSWORD="${PBS_USER_PASSWORD}" PBS_FINGERPRINT="${FINGERPRINT}" \
     proxmox-backup-client snapshots \
-    --repository ${PBS_USER}@${PVE_PBS_SERVER}:${PBS_DATASTORE_NAME}
+    --repository ${PBS_USER}@127.0.0.1:${PBS_DATASTORE_NAME}
 
 echo ""
 echo "=== restore-3-pve.sh COMPLETE ==="

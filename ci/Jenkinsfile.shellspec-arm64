@@ -234,7 +234,7 @@ FINGERPRINT=\$(proxmox-backup-manager cert info 2>/dev/null | grep "Fingerprint 
 pvesh create /storage \
     --storage "\${PVE_PBS_STORAGE_ID}" \
     --type pbs \
-    --server "\${PVE_PBS_SERVER}" \
+    --server "\127.0.0.1" \
     --datastore "\${PBS_DATASTORE_NAME}" \
     --username "\${PBS_USER}" \
     --password "\${PBS_USER_PASSWORD}" \
