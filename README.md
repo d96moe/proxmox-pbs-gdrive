@@ -14,6 +14,7 @@
 - [How It Works](#how-it-works)
 - [Supported Platforms](#supported-platforms)
 - [Repository Layout](#repository-layout)
+- [Configuration Reference](#configuration-reference)
 - [Setup](#setup)
 - [Fresh Installation](#fresh-installation)
 - [Disaster Recovery](#disaster-recovery)
@@ -157,6 +158,89 @@ The two scripts under `scripts/` are **helper scripts installed onto your Proxmo
 
 ---
 
+## Configuration Reference
+
+All configuration lives in `config.env`. Copy the template for your platform and fill in the values marked as required.
+
+### PBS Datastore
+
+| Variable | Default | Description |
+|---|---|---|
+| `PBS_PARTITION` | — | **Required.** Dedicated partition for PBS, e.g. `/dev/sda3` or `/dev/nvme0n1p4`. Must not be shared with OS or VMs. |
+| `PBS_DATASTORE_NAME` | `local-store` | PBS datastore name (shown in GUI and used in API calls). |
+| `PBS_DATASTORE_PATH` | `/mnt/pbs` | Mount point for the PBS partition. |
+
+### PBS User & Auth
+
+| Variable | Default | Description |
+|---|---|---|
+| `PBS_USER` | `backup@pbs` | PBS user that PVE uses to connect to PBS. |
+| `PBS_USER_PASSWORD` | — | **Required.** Password for the PBS user. Set via `export PBS_USER_PASSWORD=...` or directly in config.env. |
+| `PBS_TOKEN_NAME` | `pve-token` | Name of the API token created for the PBS user. |
+
+### PVE Storage Integration
+
+| Variable | Default | Description |
+|---|---|---|
+| `PVE_PBS_STORAGE_ID` | `pbs-local` | PVE storage ID for the PBS entry (shown in Datacenter → Storage). |
+| `PVE_PBS_SERVER` | `127.0.0.1` | Address PVE uses to reach PBS. Use `127.0.0.1` when PBS and PVE run on the same node. |
+
+### Retention
+
+| Variable | Default | Description |
+|---|---|---|
+| `PBS_RETENTION_LOCAL` | `keep-last=3,keep-daily=3` | PBS prune policy for local snapshots. Short retention — Google Drive handles long-term. |
+| `RESTIC_RETENTION_KEEP_LAST` | `1` | restic: always keep at least this many snapshots regardless of age. |
+| `RESTIC_RETENTION_KEEP_DAILY` | `3` | restic: keep one snapshot per day for this many days. |
+| `RESTIC_RETENTION_KEEP_WEEKLY` | `2` | restic: keep one snapshot per week for this many weeks. |
+| `RESTIC_RETENTION_KEEP_MONTHLY` | `3` | restic: keep one snapshot per month for this many months. |
+| `CONFIG_KEEP_DAYS` | `7` | How many days to keep PVE config tarballs on Google Drive. |
+
+### Restic / rclone / Google Drive
+
+| Variable | Default | Description |
+|---|---|---|
+| `RESTICPROFILE_GDRIVE_REMOTE` | `gdrive` | rclone remote name — must match the name you give the remote in `rclone config`. |
+| `RESTICPROFILE_GDRIVE_PATH` | `bu/proxmox_backup` | Google Drive path for the restic repository. |
+| `RESTIC_PASSWORD_FILE` | `/etc/resticprofile/restic-password` | Path to the file containing the restic encryption password. |
+
+### PVE Config Backup
+
+| Variable | Default | Description |
+|---|---|---|
+| `GDRIVE_CONFIG_FOLDER` | `proxmox_backup_config` | Google Drive folder where daily config tarballs are stored. |
+| `CONFIG_KEEP_DAYS` | `7` | Days to retain config tarballs on Google Drive. |
+
+### Backup Schedules
+
+Schedules use systemd calendar format (e.g. `02:00`, `Mon 03:30`). The recommended order ensures each job completes before the next starts:
+
+| Variable | Default | Job |
+|---|---|---|
+| `PBS_BACKUP_SCHEDULE` | `02:00` | PVE runs vzdump of all VMs/LXCs to PBS |
+| `PBS_PRUNE_SCHEDULE` | `03:00` | PBS removes old snapshots per retention policy |
+| `PBS_GC_SCHEDULE` | `03:30` | PBS garbage collection — frees chunks pruned above |
+| `RESTIC_BACKUP_SCHEDULE` | `04:00` | restic snapshots PBS datastore to Google Drive |
+| `RESTIC_FORGET_SCHEDULE` | `04:30` | restic prunes old Google Drive snapshots |
+| `CONFIG_BACKUP_SCHEDULE` | `05:00` | Daily PVE config tarball uploaded to Google Drive |
+
+> ℹ️ All schedules are applied automatically by `restore-3-pve.sh`. They can be adjusted afterwards in the PVE GUI (Datacenter → Backup for the PBS job) or by editing the systemd timers.
+
+### PVE Installation (aarch64 / Raspberry Pi 5 only)
+
+These variables are only used by `restore-1-install.sh` on arm64 when Proxmox VE is not yet installed. They are ignored on x86_64.
+
+| Variable | Default | Description |
+|---|---|---|
+| `PVE_HOSTNAME` | `proxmox` | Hostname for the Proxmox node. |
+| `PVE_IP` | — | **Required.** Static IP with prefix length, e.g. `192.168.1.200/24`. |
+| `PVE_GATEWAY` | — | **Required.** Default gateway, e.g. `192.168.1.1`. |
+| `PVE_DNS` | `8.8.8.8` | DNS server. |
+| `PVE_IFACE` | `eth0` | Ethernet interface name. Run `ip link` to find it (common: `eth0`, `enp2s0`). |
+| `ROOT_PASSWORD` | — | Root password to set during install. Set via `export ROOT_PASSWORD=...` or directly in config.env. |
+
+---
+
 ## Setup
 
 Before starting, make sure you have a **Google account** with enough Drive space — roughly 1.5× your PBS datastore size.
@@ -197,15 +281,7 @@ The script sets hostname, configures the network bridge, adds the pxvirt repo, i
 
 > ⚠️ Do NOT run `apt upgrade` without checking for pxvirt/pipbs version conflicts first.
 
-Minimum variables to set in `config.env`:
-
-| Variable | Description |
-|---|---|
-| `PBS_PARTITION` | Dedicated PBS partition, e.g. `/dev/sda3` or `/dev/nvme0n1p4` |
-| `PBS_USER_PASSWORD` | Set a strong password — or `export PBS_USER_PASSWORD=...` before running the script |
-| `RESTICPROFILE_GDRIVE_REMOTE` | rclone remote name (must match what you configure in rclone) |
-| `RESTICPROFILE_GDRIVE_PATH` | Google Drive path for restic repo |
-| `GDRIVE_CONFIG_FOLDER` | Google Drive folder for config tarballs |
+Fill in `config.env` — see [Configuration Reference](#configuration-reference) above. At minimum set `PBS_PARTITION`, `PBS_USER_PASSWORD`, `RESTICPROFILE_GDRIVE_REMOTE`, `RESTICPROFILE_GDRIVE_PATH`, and `GDRIVE_CONFIG_FOLDER`.
 
 ### Step 2: Create PBS partition
 
@@ -407,31 +483,11 @@ pct restore <vmid> pbs-local:backup/ct/<vmid>/<timestamp> --storage local
 
 ## Backup Schedule and Retention
 
-All schedules and retention values are configured in `config.env`.
+All schedules and retention values are configured in `config.env` — see [Configuration Reference](#configuration-reference) for all variables and defaults.
 
-| config.env variable | Default | Job |
-|---|---|---|
-| `PBS_BACKUP_SCHEDULE` | `02:00` | PBS backup all VMs/LXCs (set in PVE GUI: Datacenter → Backup) |
-| `PBS_PRUNE_SCHEDULE` | `03:00` | PBS prune old snapshots |
-| `PBS_GC_SCHEDULE` | `03:30` | PBS garbage collection (frees chunks from last night's prune) |
-| `RESTIC_BACKUP_SCHEDULE` | `04:00` | restic snapshot PBS datastore → Google Drive |
-| `RESTIC_FORGET_SCHEDULE` | `04:30` | restic prune old GDrive snapshots |
-| `CONFIG_BACKUP_SCHEDULE` | `05:00` | PVE config tarball → Google Drive |
+**Why the order matters:** PBS prune removes index entries but doesn't free disk space — GC does that. restic runs after GC to snapshot the clean post-prune datastore. Config backup runs last.
 
-**Why this order:** prune removes index entries but doesn't free disk space immediately. GC runs after prune and actually frees the chunks. restic runs after GC to snapshot the clean post-prune datastore. Config backup runs last.
-
-> ℹ️ All schedules are set automatically by `restore-3-pve.sh`. The PBS backup job can be adjusted afterwards in the PVE GUI under Datacenter → Backup.
-
-| Storage | Retention variable | Default |
-|---|---|---|
-| PBS local `/mnt/pbs` | `PBS_RETENTION_LOCAL` | `keep-last=3,keep-daily=3` |
-| Google Drive (restic) | `RESTIC_RETENTION_KEEP_LAST` | `1` |
-| | `RESTIC_RETENTION_KEEP_DAILY` | `3` |
-| | `RESTIC_RETENTION_KEEP_WEEKLY` | `2` |
-| | `RESTIC_RETENTION_KEEP_MONTHLY` | `3` |
-| Google Drive (config tarballs) | `CONFIG_KEEP_DAYS` | `7` |
-
-Local retention is intentionally short — Google Drive handles long-term retention.
+Local PBS retention is intentionally short — Google Drive handles long-term retention.
 
 ---
 
