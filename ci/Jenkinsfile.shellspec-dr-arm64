@@ -19,6 +19,7 @@ pipeline {
     options {
         disableConcurrentBuilds()
         timestamps()
+        lock('ci-vm-arm64')
     }
 
     triggers {
