@@ -223,7 +223,7 @@ Schedules use systemd calendar format (e.g. `02:00`, `Mon 03:30`). The recommend
 | `RESTIC_FORGET_SCHEDULE` | `04:30` | restic prunes old Google Drive snapshots |
 | `CONFIG_BACKUP_SCHEDULE` | `05:00` | Daily PVE config tarball uploaded to Google Drive |
 
-> ℹ️ All schedules are applied automatically by `restore-3-pve.sh`. They can be adjusted afterwards in the PVE GUI (Datacenter → Backup for the PBS job) or by editing the systemd timers.
+> ℹ️ All schedules are applied automatically by `restore-3-pve.sh`. The PBS backup job (`PBS_BACKUP_SCHEDULE`) can be adjusted afterwards in the PVE GUI under Datacenter → Backup. The restic and config backup schedules are systemd timers — edit `/etc/systemd/system/restic-backup.timer` and `/etc/systemd/system/pve-config-backup.timer` and run `systemctl daemon-reload`.
 
 ### PVE Installation (aarch64 / Raspberry Pi 5 only)
 
