@@ -126,6 +126,7 @@ ENDSSH
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
+dpkg --configure -a 2>/dev/null || true
 cd ${SCRIPTS_DIR}
 cp ci/config_ci.env config.env
 CI=true bash restore-1-install.sh
