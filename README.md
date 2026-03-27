@@ -417,7 +417,7 @@ Use this when replacing failed hardware with backups already in Google Drive.
 
 **Prerequisites:**
 - At least one restic snapshot in Google Drive
-- At least one config tarball (`pve-config-YYYY-MM-DD.tar.gz`) in Google Drive
+- At least one config tarball (`pve-config-YYYY-MM-DD.tar.gz.enc`) in Google Drive
 - Access to Google Drive from a browser
 
 The nightly config tarball contains:
@@ -428,7 +428,7 @@ The nightly config tarball contains:
 
 Restoring this tarball on new hardware gives you back rclone auth, the restic password, and the full PVE config — no manual rclone/restic reconfiguration needed.
 
-> ⚠️ **Match your tar and restic snapshot dates.** Pick a config tar and restic snapshot from the **same night**. The tar is named `pve-config-YYYY-MM-DD.tar.gz`. Mixing dates means your PVE config will reference VMs that don't exist in the restored PBS datastore, or vice versa.
+> ⚠️ **Match your tar and restic snapshot dates.** Pick a config tar and restic snapshot from the **same night**. The tar is named `pve-config-YYYY-MM-DD.tar.gz.enc`. Mixing dates means your PVE config will reference VMs that don't exist in the restored PBS datastore, or vice versa.
 
 ### Step 4: Download config tarball
 
@@ -436,11 +436,11 @@ On any machine with a browser:
 
 1. Go to https://drive.google.com
 2. Navigate to `bu/<GDRIVE_CONFIG_FOLDER>/`
-3. Download `pve-config-YYYY-MM-DD.tar.gz` matching the restic snapshot you plan to restore
+3. Download `pve-config-YYYY-MM-DD.tar.gz.enc` matching the restic snapshot you plan to restore
 
 Copy to the PVE server:
 ```bash
-scp pve-config-YYYY-MM-DD.tar.gz root@YOUR-PVE-IP:/tmp/
+scp pve-config-YYYY-MM-DD.tar.gz.enc root@YOUR-PVE-IP:/tmp/
 ```
 
 > ℹ️ Do not extract it manually. `restore-2-auth.sh` stops pve-cluster first, restores `config.db` and rclone auth, then restarts pve-cluster — all in the correct order.

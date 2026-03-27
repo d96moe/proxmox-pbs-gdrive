@@ -26,6 +26,12 @@ if [ ! -f "${CONFIG_FILE}" ]; then
 fi
 source "${CONFIG_FILE}"
 
+if [ ! -f "${CONFIG_ENCRYPT_PASSWORD_FILE:-}" ]; then
+    echo "ERROR: CONFIG_ENCRYPT_PASSWORD_FILE not set or file not found: '${CONFIG_ENCRYPT_PASSWORD_FILE:-}'"
+    echo "  Create it: openssl rand -base64 32 > ${CONFIG_ENCRYPT_PASSWORD_FILE:-/etc/resticprofile/config-encrypt-password} && chmod 600 ${CONFIG_ENCRYPT_PASSWORD_FILE:-/etc/resticprofile/config-encrypt-password}"
+    exit 1
+fi
+
 GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}"
 TIMESTAMP=$(date +%Y-%m-%d)
 TARBALL="/tmp/pve-config-${TIMESTAMP}.tar.gz"
@@ -37,7 +43,7 @@ echo "    Destination: ${GDRIVE_CONFIG_PATH}"
 # Checkpoint SQLite WAL into the main database before archiving.
 # pmxcfs may have recent writes only in the WAL file; without this the
 # backup captures a stale config.db that is missing recent changes.
-sqlite3 /var/lib/pve-cluster/config.db "PRAGMA wal_checkpoint(FULL);" 2>/dev/null || true
+sqlite3 /var/lib/pve-cluster/config.db "PRAGMA wal_checkpoint(FULL);" >/dev/null 2>&1 || true
 
 # Create tarball of critical config files
 # /boot/firmware/config.txt is Pi5-specific — harmless to include on x86 (will just be missing)
