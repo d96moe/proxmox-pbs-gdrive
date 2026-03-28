@@ -34,6 +34,7 @@ echo "=== restic VM backup started: $(date) ==="
 # ── 1. Stop PBS ──────────────────────────────────────────────────────────────
 echo "--- Stopping PBS..."
 systemctl stop proxmox-backup proxmox-backup-proxy || true
+sync
 
 # Ensure PBS restarts on exit (including error)
 trap 'echo "--- Restarting PBS..."; systemctl start proxmox-backup proxmox-backup-proxy || true' EXIT
