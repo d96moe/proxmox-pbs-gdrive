@@ -184,7 +184,14 @@ _arm64_check_compat() {
 
 # Helper: kill any background apt and wait for lists lock before running apt-get
 apt_get() {
+    # Stop apt-daily timers/services — they restart after reboot and can corrupt
+    # /var/cache/apt/ mid-run, causing "rename srcpkgcache.bin.teeXXXX ENOENT".
+    systemctl stop apt-daily.timer apt-daily-upgrade.timer \
+        apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
     pkill -x apt-get 2>/dev/null || true
+    # Ensure cache directory exists and stale binary caches are gone.
+    mkdir -p /var/cache/apt
+    rm -f /var/cache/apt/pkgcache.bin /var/cache/apt/srcpkgcache.bin
     for _i in $(seq 1 12); do
         flock -n /var/lib/apt/lists/lock true 2>/dev/null && break
         echo "  apt lists lock busy ($_i/12), waiting 5s..."
