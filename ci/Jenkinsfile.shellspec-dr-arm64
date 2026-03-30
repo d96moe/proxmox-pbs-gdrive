@@ -76,7 +76,7 @@ pipeline {
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 udevadm settle
 ROOT_DISK=\$(lsblk -ndo PKNAME \$(findmnt -n -o SOURCE /) 2>/dev/null | head -1)
-DATA_DISK=\$(lsblk -nd -o NAME | grep -v "^\${ROOT_DISK}\$" | head -1)
+DATA_DISK=\$(lsblk -nd -o NAME | grep -v "^\${ROOT_DISK}\$" | grep -v "^loop" | head -1)
 echo "Root disk: /dev/\${ROOT_DISK}  Data disk: /dev/\${DATA_DISK}"
 [ -z "\${DATA_DISK}" ] && { echo "ERROR: data disk not found"; lsblk; exit 1; }
 mkfs.ext4 -F -F -m 0 /dev/\${DATA_DISK}
