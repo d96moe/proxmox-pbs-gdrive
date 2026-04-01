@@ -125,7 +125,7 @@ backup-pve-config.sh (nightly at 04:00)
 
 > ⚠️ **Do NOT run this from an SD card.** Proxmox VE's write patterns (journals, VM disk I/O, PBS chunk store) will destroy an SD card quickly. You need an SSD. The setup this repo was built on uses a Pi 5 booting from an NVMe drive connected via USB adapter — cheap and works well.
 
-> ⚠️ **ARM64 only:** pipbs and pxvirt are community projects, not officially supported by Proxmox. They must be kept at the same major.minor version — a mismatch can cause GUI rendering issues and other instability. `restore-1-install.sh` checks versions from both repos **before installing anything** and automatically pins whichever package is ahead to a matching older version if needed. Before running `apt upgrade`, always verify both repos are at the same version first:
+> ⚠️ **ARM64 only:** pipbs and pxvirt are community projects, not officially supported by Proxmox. They must have compatible API versions — a mismatch can cause GUI rendering issues and other instability. `restore-1-install.sh` checks versions from both repos **before installing anything** and automatically pins whichever package is ahead to a matching older version if needed. Before running `apt upgrade`, always verify both repos are at the same API version first:
 > ```bash
 > apt-cache policy proxmox-ve proxmox-backup-server | grep -A1 "Candidate:"
 > dpkg -l proxmox-ve proxmox-backup-server | awk '/^ii/{print $2, $3}'
