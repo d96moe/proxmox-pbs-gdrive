@@ -69,7 +69,7 @@ Supports **x86_64** (standard Proxmox VE) and **aarch64** (Raspberry Pi 5, commu
 | ✅ Self-contained restore | Config tarball carries credentials and PVE config — no manual rclone/restic setup on new hardware |
 | ✅ PBS deduplication | Local backups fast and space-efficient; only changed blocks stored |
 | ✅ restic incremental to GDrive | After first upload, only the diff is sent nightly |
-| ❌ No UI for GDrive backups | restic is CLI-only; no PVE interface for managing Google Drive snapshots *(separate hobby project underway to fix this)* |
+| ⚠️ No built-in UI for GDrive backups | restic is CLI-only; no PVE interface for managing Google Drive snapshots — see [proxmox-backup-gui](https://github.com/d96moe/proxmox-backup-gui) for a companion web dashboard that covers this |
 | ❌ No single-VM restore from GDrive | restic backs up the full PBS datastore as a unit — to recover one VM you must restore the entire datastore first |
 | ❌ First backup is slow | Initial upload is the full PBS datastore — can take many hours |
 | ❌ Full disaster recovery takes hours | Downloading the entire datastore from GDrive is not quick |
