@@ -101,7 +101,7 @@ backup-pve-config.sh (nightly at 04:00)
 ```
 
 - **[Proxmox Backup Server (PBS)](https://www.proxmox.com/en/proxmox-backup-server)** stores incremental, deduplicated VM/LXC snapshots locally on `/mnt/pbs`
-- **[restic](https://restic.net/)** snapshots the full PBS datastore to Google Drive nightly via **[rclone](https://rclone.org/)** — PBS is stopped during the snapshot to ensure a consistent on-disk state. PBS's chunk store has strict write-ordering requirements (chunks must exist before the index referencing them is written), and any tool that syncs the datastore while PBS is running risks producing a corrupted copy. Stopping PBS before restic reads the datastore avoids this entirely.
+- **[restic](https://restic.net/)** snapshots the full PBS datastore to Google Drive nightly via **[rclone](https://rclone.org/)** — PBS is stopped during the snapshot to ensure a consistent on-disk state. PBS's chunk store has strict write-ordering requirements (chunks must exist before the index referencing them is written), and any tool that syncs the datastore while PBS is running risks producing a corrupted copy. Stopping PBS before restic reads the datastore avoids this entirely. Each restic snapshot is tagged with the exact PBS snapshot IDs it contains (e.g. `ct-104-1775554738`, `vm-100-1775554738`), allowing [proxmox-backup-gui](https://github.com/d96moe/proxmox-backup-gui) to match cloud snapshots back to specific VMs without ambiguity.
 - **[resticprofile](https://creativeprojects.github.io/resticprofile/)** manages the restic schedule, retention config, and forget rules
 - **config tarball** backs up everything needed to recover on new hardware: PVE cluster database, rclone OAuth token, restic password, network config
 

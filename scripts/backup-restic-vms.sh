@@ -51,8 +51,14 @@ for backup_type in vm ct; do
         id=$(basename "${id_dir}")
         # Only numeric IDs
         [[ "${id}" =~ ^[0-9]+$ ]] || continue
-        TAG_ARGS+=("--tag" "${backup_type}-${id}")
-        echo "    Found: ${backup_type}-${id}"
+        # Tag once per PBS snapshot with exact backup timestamp: ct-301-1775554738
+        # This allows the GUI to match cloud entries back to exact PBS snapshots.
+        for snap_dir in "${id_dir}"*/; do
+            snap=$(basename "${snap_dir}")
+            ts=$(date -d "${snap}" +%s 2>/dev/null) || continue
+            TAG_ARGS+=("--tag" "${backup_type}-${id}-${ts}")
+            echo "    Found: ${backup_type}-${id} @ ${snap} (ts=${ts})"
+        done
     done
 done
 
