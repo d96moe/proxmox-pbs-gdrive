@@ -68,7 +68,7 @@ fi
 
 # ── 3. Run restic backup ──────────────────────────────────────────────────────
 echo "--- Running restic backup (timeout 6h)..."
-timeout 6h restic backup "${PBS_DATASTORE_PATH}" \
+timeout 6h restic backup --retry-lock 30m "${PBS_DATASTORE_PATH}" \
     --password-file "${RESTIC_PASSWORD_FILE}" \
     --repo "${RESTIC_REPO}" \
     --exclude "${PBS_DATASTORE_PATH}/.lock" \
@@ -76,7 +76,7 @@ timeout 6h restic backup "${PBS_DATASTORE_PATH}" \
 
 # ── 4. Forget / prune ────────────────────────────────────────────────────────
 echo "--- Running restic forget (timeout 3h)..."
-timeout 3h restic forget \
+timeout 3h restic forget --retry-lock 30m \
     --password-file "${RESTIC_PASSWORD_FILE}" \
     --repo "${RESTIC_REPO}" \
     --keep-last    "${RESTIC_RETENTION_KEEP_LAST}" \
