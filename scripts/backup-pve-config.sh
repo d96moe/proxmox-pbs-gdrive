@@ -12,6 +12,9 @@
 #   - /etc/resticprofile/     restic profiles + password file
 #   - /usr/local/bin/    Our custom scripts
 #   - /boot/firmware/config.txt  Pi5 kernel config (4k page-size setting)
+#   - /etc/pve-agent/    PVE agent config (tokens, PBS connection)
+#   - /opt/pve-agent/*.py  PVE agent source (venv excluded — recreatable)
+#   - /etc/systemd/system/pve-agent.service  Systemd unit
 #
 # Prunes config tarballs to match restic snapshot dates — so every kept
 # tarball has a corresponding restic snapshot to restore from.
@@ -60,6 +63,9 @@ tar -czf "${TARBALL}" \
     /usr/local/bin/stop-proxmox-backup.sh \
     /usr/local/bin/backup-pve-config.sh \
     /etc/proxmox-backup-restore/ \
+    /etc/pve-agent/ \
+    $(find /opt/pve-agent -maxdepth 1 -name '*.py' 2>/dev/null) \
+    /etc/systemd/system/pve-agent.service \
     /boot/firmware/config.txt \
     2>/dev/null || true
 
