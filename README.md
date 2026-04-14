@@ -425,6 +425,8 @@ The nightly config tarball contains:
 - `/root/.config/rclone/` — rclone OAuth token for Google Drive
 - `/etc/resticprofile/` — restic profiles and password file
 - `/etc/fstab`, network config, custom scripts
+- `/etc/pve-agent/` — PVE agent config (tokens, PBS connection — required if proxmox-backup-gui is deployed)
+- `/opt/pve-agent/*.py` — PVE agent source files (venv excluded, recreatable)
 
 Restoring this tarball on new hardware gives you back rclone auth, the restic password, and the full PVE config — no manual rclone/restic reconfiguration needed.
 
@@ -597,6 +599,6 @@ The PBS fingerprint or token in config.env doesn't match the restored PBS instan
 
 ## CI & Testing
 
-Two Jenkins pipelines run on a weekly basis to verify both scenarios end-to-end. ShellSpec integration tests verify the end state after each run.
+Jenkins pipelines verify both scenarios end-to-end automatically. Scenario A (install + backup) runs nightly; Scenario B (DR restore) runs weekly on Sundays. ShellSpec integration tests verify the end state after each run.
 
 See [ci/README.md](ci/README.md) for pipeline setup, Jenkins job configuration, and test details.

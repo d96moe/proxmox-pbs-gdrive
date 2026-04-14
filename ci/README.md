@@ -20,10 +20,10 @@ Two Jenkins pipelines automatically verify the scripts end-to-end on real Proxmo
 
 | Pipeline | Jenkins job | Jenkinsfile | Schedule | What it tests |
 |---|---|---|---|---|
-| Scenario A | `proxmox-ci-backup` | `ci/Jenkinsfile.shellspec` | Weekly | Install + PBS backup + GDrive backup |
-| Scenario B (DR) | `proxmox-ci-dr` | `ci/Jenkinsfile.shellspec-dr` | Weekly | Full DR restore from GDrive |
-| Scenario A (ARM64) | `proxmox-ci-backup-arm64` | `ci/Jenkinsfile.shellspec-arm64` | Weekly | Same as A, emulated arm64 on x86_64 host |
-| Scenario B (ARM64) | `proxmox-ci-dr-arm64` | `ci/Jenkinsfile.shellspec-dr-arm64` | Weekly | Full DR restore, emulated arm64 on x86_64 host |
+| Scenario A | `proxmox-ci-backup` | `ci/Jenkinsfile.shellspec` | Nightly ~21:00 | Install + PBS backup + GDrive backup |
+| Scenario B (DR) | `proxmox-ci-dr` | `ci/Jenkinsfile.shellspec-dr` | Sundays ~21:00 | Full DR restore from GDrive |
+| Scenario A (ARM64) | `proxmox-ci-backup-arm64` | `ci/Jenkinsfile.shellspec-arm64` | Nightly ~22:00 | Same as A, emulated arm64 on x86_64 host |
+| Scenario B (ARM64) | `proxmox-ci-dr-arm64` | `ci/Jenkinsfile.shellspec-dr-arm64` | Sundays ~23:00 | Full DR restore, emulated arm64 on x86_64 host |
 
 Scenario B depends on Scenario A having run at least once (needs a restic snapshot and config tarball on Google Drive).
 
