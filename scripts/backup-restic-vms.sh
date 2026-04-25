@@ -83,6 +83,7 @@ timeout 7h restic forget --retry-lock 30m \
     --keep-daily   "${RESTIC_RETENTION_KEEP_DAILY}" \
     --keep-weekly  "${RESTIC_RETENTION_KEEP_WEEKLY}" \
     --keep-monthly "${RESTIC_RETENTION_KEEP_MONTHLY}" \
+    --max-repack-size 100G \
     --prune || { echo "ERROR: restic forget failed or timed out (exit $?)"; exit 1; }
 
 # ── 5. Empty Google Drive trash ──────────────────────────────────────────────
