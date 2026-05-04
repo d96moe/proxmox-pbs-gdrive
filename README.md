@@ -92,8 +92,14 @@ Note that restic backs up the **entire PBS datastore** as a unit — not individ
 ```
 Proxmox VE (nightly at 02:00)
     └── PBS backup → /mnt/pbs  (dedicated partition)
-            └── restic (nightly ~02:30) → rclone → Google Drive
-                    └── keeps last 3 local, up to 5 months on Google Drive
+
+backup-restic-vms.sh (nightly at 02:30, waits for PBS backup to finish)
+    ├── 1. wait until PBS backup task completes (polls every 30s, max 4h)
+    ├── 2. run PBS prune job   → removes old PBS snapshots per retention policy
+    ├── 3. stop PBS            → consistent on-disk state for restic
+    ├── 4. restic backup       → rclone → Google Drive
+    ├── 5. restic forget/prune → apply cloud retention policy
+    └── 6. start PBS again
 
 backup-pve-config.sh (nightly at 04:00)
     └── config.db + rclone auth + restic password → Google Drive
@@ -220,13 +226,12 @@ Schedules use systemd calendar format (e.g. `02:00`, `Mon 03:30`). The recommend
 | Variable | Default | Job |
 |---|---|---|
 | `PBS_BACKUP_SCHEDULE` | `02:00` | PVE runs vzdump of all VMs/LXCs to PBS |
-| `PBS_PRUNE_SCHEDULE` | `03:00` | PBS removes old snapshots per retention policy |
-| `PBS_GC_SCHEDULE` | `03:30` | PBS garbage collection — frees chunks pruned above |
-| `RESTIC_BACKUP_SCHEDULE` | `04:00` | restic snapshots PBS datastore to Google Drive |
-| `RESTIC_FORGET_SCHEDULE` | `04:30` | restic prunes old Google Drive snapshots |
-| `CONFIG_BACKUP_SCHEDULE` | `05:00` | Daily PVE config tarball uploaded to Google Drive |
+| `RESTIC_BACKUP_SCHEDULE` | `02:30` | restic script: waits for PBS backup → PBS prune → restic backup + forget |
+| `CONFIG_BACKUP_SCHEDULE` | `04:00` | Daily PVE config tarball uploaded to Google Drive |
 
-> ℹ️ All schedules are applied automatically by `restore-3-pve.sh`. The PBS backup job (`PBS_BACKUP_SCHEDULE`) can be adjusted afterwards in the PVE GUI under Datacenter → Backup. The restic and config backup schedules are systemd timers — edit `/etc/systemd/system/restic-backup.timer` and `/etc/systemd/system/pve-config-backup.timer` and run `systemctl daemon-reload`.
+> ℹ️ PBS prune is **not a separate timer** — `backup-restic-vms.sh` triggers the PBS prune job automatically after backup completes and before restic runs. This guarantees restic only snapshots the datastore after stale PBS snapshots are gone. The PBS prune job (`nightly-prune`) remains visible in the PBS GUI with its retention settings; its own schedule is a fallback only.
+>
+> All schedules are applied automatically by `restore-3-pve.sh`. The PBS backup job (`PBS_BACKUP_SCHEDULE`) can be adjusted afterwards in the PVE GUI under Datacenter → Backup. The restic and config backup schedules are systemd timers — edit `/etc/systemd/system/restic-backup.timer` and `/etc/systemd/system/pve-config-backup.timer` and run `systemctl daemon-reload`.
 
 ### PVE Installation (aarch64 / Raspberry Pi 5 only)
 
@@ -492,7 +497,7 @@ pct restore <vmid> pbs-local:backup/ct/<vmid>/<timestamp> --storage local
 
 All schedules and retention values are configured in `config.env` — see [Configuration Reference](#configuration-reference) for all variables and defaults.
 
-**Why the order matters:** PBS prune removes index entries but doesn't free disk space — GC does that. restic runs after GC to snapshot the clean post-prune datastore. Config backup runs last.
+**Why the order matters:** restic snapshots the PBS datastore after PBS prune has run, so it never captures snapshots that are about to be deleted. `backup-restic-vms.sh` handles this automatically: it polls until the PBS backup task is done, triggers the PBS prune job, waits for it to complete, and only then stops PBS and runs restic. No fixed schedule gap is needed — the script waits for each step.
 
 Local PBS retention is intentionally short — Google Drive handles long-term retention.
 
