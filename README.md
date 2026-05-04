@@ -231,7 +231,7 @@ Schedules use systemd calendar format (e.g. `02:00`, `Mon 03:30`). The recommend
 
 > ℹ️ PBS prune is **not a separate timer** — `backup-restic-vms.sh` triggers the PBS prune job automatically after backup completes and before restic runs. This guarantees restic only snapshots the datastore after stale PBS snapshots are gone. The PBS prune job (`nightly-prune`) remains visible in the PBS GUI with its retention settings; its own schedule is a fallback only.
 >
-> All schedules are applied automatically by `restore-3-pve.sh`. Once the [proxmox-backup-gui](https://github.com/d96moe/proxmox-backup-gui) agent is running, the PBS backup schedule and restic backup schedule can be changed directly from the GUI Settings modal — no SSH needed. The PBS backup job can also be adjusted in the PVE GUI under Datacenter → Backup. To change schedules manually, edit `/etc/systemd/system/restic-backup.timer` and run `systemctl daemon-reload`.
+> All schedules are applied automatically by `restore-3-pve.sh`. The PBS backup job can be adjusted in the PVE GUI under Datacenter → Backup. To change the restic or config backup schedule, edit `/etc/systemd/system/restic-backup.timer` (or `pve-config-backup.timer`) and run `systemctl daemon-reload`. If you use [proxmox-backup-gui](https://github.com/d96moe/proxmox-backup-gui) as a companion dashboard, schedules can also be changed from its Settings modal.
 
 ### PVE Installation (aarch64 / Raspberry Pi 5 only)
 
