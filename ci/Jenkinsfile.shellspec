@@ -18,7 +18,7 @@ pipeline {
     }
 
     triggers {
-        cron('H 21 * * *')
+        cron('H 17 * * *')  // 17:xx UTC = 19:xx CEST — well before prod PBS backup at 02:00 CEST
     }
 
     environment {

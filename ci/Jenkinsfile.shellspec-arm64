@@ -18,7 +18,7 @@ pipeline {
     }
 
     triggers {
-        cron('H 22 * * *')  // kept — separate lock (ci-vm-arm64) from x86 jobs
+        cron('H 19 * * *')  // 19:xx UTC = 21:xx CEST — separate lock (ci-vm-arm64) from x86 jobs
     }
 
     environment {

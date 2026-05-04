@@ -22,7 +22,7 @@ pipeline {
     }
 
     triggers {
-        cron('H 23 * * 0')  // after ci-backup-arm64 (H 22) is done — 1h margin to PBS BU at 02:00
+        cron('H 19 * * 0')  // 19:xx UTC = 21:xx CEST — after ci-backup-arm64 (H 18) is done
     }
 
     environment {
