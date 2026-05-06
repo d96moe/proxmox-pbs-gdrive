@@ -37,10 +37,13 @@ PBS_PRUNE_JOB_ID="${PBS_PRUNE_JOB_ID:-nightly-prune}"
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 _pbs_running_task_count() {
-    # Count running PBS tasks whose worker-type contains $1
+    # Count running PBS tasks whose worker-type contains $1.
+    # Avoid a pipeline so pipefail doesn't propagate a non-zero exit from
+    # proxmox-backup-manager (which can fail when PBS is busy with a backup).
     local pattern="$1"
-    proxmox-backup-manager task list --output-format json 2>/dev/null | \
-        python3 -c "
+    local json
+    json=$(proxmox-backup-manager task list --output-format json 2>/dev/null) || json="[]"
+    echo "${json}" | python3 -c "
 import json, sys
 pattern = sys.argv[1]
 try:
