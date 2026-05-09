@@ -69,7 +69,9 @@ wait_for_pbs_tasks() {
             exit 1
         fi
     done
-    [ "${elapsed}" -gt 0 ] && echo "--- ${label} done (waited ${elapsed}s)"
+    if [ "${elapsed}" -gt 0 ]; then
+        echo "--- ${label} done (waited ${elapsed}s)"
+    fi
 }
 
 echo "=== restic VM backup started: $(date) ==="
