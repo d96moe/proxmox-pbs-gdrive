@@ -10,8 +10,9 @@
 //   2. Restores PBS datastore from GDrive (restore-2-auth.sh, Path A: local tar)
 //   3. Verifies config.db was actually restored (LXC 100 visible in PVE config)
 //   4. Wires PBS into PVE (restore-3-pve.sh)
-//   5. Verifies LXC snapshot visible in PBS
-//   6. Restores LXC 100 from PBS and verifies it starts (proves chunk integrity)
+//   5. Verifies pve-agent was restored and HTTP health endpoint responds
+//   6. Verifies LXC snapshot visible in PBS
+//   7. Restores LXC 100 from PBS and verifies it starts (proves chunk integrity)
 //
 // Post-always: destroys the cloned VM.
 // =============================================================================
@@ -206,6 +207,30 @@ ENDSSH
 set -euo pipefail
 cd ${SCRIPTS_DIR}
 CI=true bash restore-3-pve.sh
+ENDSSH
+                """
+            }
+        }
+
+        stage('Verify pve-agent') {
+            steps {
+                echo "Checking that restore-3-pve.sh Step 8 restored and started pve-agent..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+# Give systemd a moment after restore-3-pve.sh
+sleep 3
+systemctl is-active pve-agent \
+    && echo "pve-agent: active — monitoring agent restored OK" \
+    || { echo "ERROR: pve-agent not running after restore"; journalctl -u pve-agent -n 30 --no-pager; exit 1; }
+TOKEN=\$(python3 -c "import json; print(json.load(open('/etc/pve-agent/config.json'))['agent_token'])" 2>/dev/null || true)
+if [ -n "\${TOKEN}" ]; then
+    curl -sf -H "Authorization: Bearer \${TOKEN}" http://127.0.0.1:8099/health \
+        && echo "Agent HTTP health: OK" \
+        || { echo "ERROR: Agent HTTP health check failed"; exit 1; }
+else
+    echo "WARNING: could not read agent_token from config — skipping HTTP check"
+fi
 ENDSSH
                 """
             }
