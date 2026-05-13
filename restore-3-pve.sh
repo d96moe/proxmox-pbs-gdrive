@@ -6,7 +6,7 @@
 # Prerequisites:
 #   - restore-2-auth.sh completed (datastore restored to PBS_DATASTORE_PATH)
 #
-# After this script: restore VMs/LXCs via Proxmox GUI
+# After this script: restore VMs/LXCs via Proxmox GUI (including LXC 199 for the monitoring GUI)
 # =============================================================================
 
 set -euo pipefail
@@ -141,6 +141,24 @@ TIMEREOF
 systemctl daemon-reload
 systemctl enable --now restic-backup.timer
 
+echo "=== Step 8: Restore pve-agent (monitoring) ==="
+# config backup captures /etc/pve-agent/, /opt/pve-agent/*.py, and the
+# systemd unit — restore-2-auth.sh already extracted them.
+# The venv is excluded from backup (recreatable); recreate it here.
+if [ -f /opt/pve-agent/pve_agent.py ]; then
+    echo "  Agent source found — recreating venv..."
+    python3 -m venv /opt/pve-agent/.venv
+    /opt/pve-agent/.venv/bin/pip install -q \
+        "flask>=3.0" "flask-sock>=0.7" "requests>=2.31" "paho-mqtt>=1.6" "urllib3>=2.0"
+    systemctl daemon-reload
+    systemctl enable --now pve-agent
+    echo "  pve-agent running: $(systemctl is-active pve-agent)"
+else
+    echo "  Agent source not found in config backup — reinstall manually:"
+    echo "    git clone https://github.com/d96moe/proxmox-backup-gui.git /tmp/gui"
+    echo "    bash /tmp/gui/setup-agent.sh"
+fi
+
 echo "=== Step 9: Verify snapshots visible in PBS ==="
 PBS_PASSWORD="${PBS_USER_PASSWORD}" PBS_FINGERPRINT="${FINGERPRINT}" \
     proxmox-backup-client snapshots \
@@ -152,12 +170,16 @@ echo ""
 echo "All PBS snapshots should now be visible in Proxmox GUI:"
 echo "  1. Go to Datacenter -> Storage -> ${PVE_PBS_STORAGE_ID} -> Content"
 echo "  2. Select snapshot and click Restore"
+echo "  3. Restore LXC 199 (proxmox-backup-gui) if it was backed up in PBS"
 echo ""
 echo "Verify schedules:"
 echo "  proxmox-backup-manager prune-job list"
 echo "  proxmox-backup-manager datastore show ${PBS_DATASTORE_NAME}"
 echo "  systemctl list-timers | grep restic"
 echo "  systemctl status restic-backup.timer"
+echo ""
+echo "Verify monitoring agent:"
+echo "  journalctl -u pve-agent -f"
 echo ""
 echo "Manual restic backup run:"
 echo "  systemctl start restic-backup.service"

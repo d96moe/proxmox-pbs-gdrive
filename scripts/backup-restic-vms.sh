@@ -23,6 +23,7 @@
 # =============================================================================
 
 set -euo pipefail
+trap 'echo "ERROR: script failed at line $LINENO (exit $?)" >&2' ERR
 
 CONFIG_FILE="/etc/proxmox-backup-restore/config.env"
 if [ ! -f "${CONFIG_FILE}" ]; then
