@@ -75,6 +75,10 @@ ROOT_DISK=\$(lsblk -ndo PKNAME \$(findmnt -n -o SOURCE /) 2>/dev/null | head -1)
 DATA_DISK=\$(lsblk -nd -o NAME | grep -v "^\${ROOT_DISK}\$" | grep -v "^loop" | head -1)
 echo "Root disk: /dev/\${ROOT_DISK}  Data disk: /dev/\${DATA_DISK}"
 [ -z "\${DATA_DISK}" ] && { echo "ERROR: data disk not found"; lsblk; exit 1; }
+systemctl stop mnt-pbs.mount 2>/dev/null || true
+umount -f /mnt/pbs 2>/dev/null || true
+umount -f /dev/\${DATA_DISK} 2>/dev/null || true
+sleep 1
 mkfs.ext4 -F -F -m 0 /dev/\${DATA_DISK}
 ENDSSH
                 """
