@@ -127,6 +127,26 @@ HOSTNAME="restore-ci"
 hostnamectl set-hostname "${HOSTNAME}"
 grep -qF "192.168.0.251 ${HOSTNAME}" /etc/hosts || echo "192.168.0.251 ${HOSTNAME}.local ${HOSTNAME}" >> /etc/hosts
 
+# Every CI clone of this template uses the same fixed IP (192.168.0.251), so
+# there's no need for cloud-init to template per-instance network config —
+# and on this image it's unreliable anyway: installing proxmox-ve pulls in
+# ifupdown2, which claims eth0 and sets it "unmanaged" for systemd-networkd,
+# but cloud-init's own network stage doesn't reliably apply an ifupdown-style
+# config either, leaving eth0 down on every clone. Bake the static config
+# directly into the template instead and disable cloud-init's network module
+# entirely (same pattern already used for real installs — see
+# restore-1-install.sh's "network: {config: disabled}").
+cat > /etc/network/interfaces.d/50-ci-static << 'EOF'
+auto eth0
+iface eth0 inet static
+    address 192.168.0.251/24
+    gateway 192.168.0.1
+    dns-nameservers 8.8.8.8
+EOF
+mkdir -p /etc/cloud/cloud.cfg.d
+echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+ifup eth0 || true
+
 # Add Proxmox VE repo (no-subscription)
 curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg \
     -o /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
