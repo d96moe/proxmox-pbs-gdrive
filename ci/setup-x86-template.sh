@@ -156,13 +156,21 @@ cp /root/.ssh/authorized_keys /root/.ssh/authorized_keys.bak
 sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 net.ifnames=0 biosdevname=0"/' /etc/default/grub
 update-grub
 
+# PVE's own default /etc/network/interfaces template (written when
+# proxmox-ve installs, below) already sets eth0 to "manual" — it expects a
+# bridge on top, not a directly-configured interface. Skipping the bridge
+# (as an earlier version of this script did) leaves eth0 itself reachable,
+# but breaks anything that needs vmbr0 to exist, like restoring an LXC
+# container's network from a PBS backup ("bridge 'vmbr0' does not exist").
 mkdir -p /etc/network/interfaces.d
 cat > /etc/network/interfaces.d/50-ci-static << 'EOF'
-auto eth0
-iface eth0 inet static
+auto vmbr0
+iface vmbr0 inet static
     address 192.168.0.251/24
     gateway 192.168.0.1
-    dns-nameservers 8.8.8.8
+    bridge-ports eth0
+    bridge-stp off
+    bridge-fd 0
 EOF
 # ifupdown2 isn't installed yet at this point (it lands as a proxmox-ve
 # dependency below) — make sure the main interfaces file sources this
