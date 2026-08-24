@@ -136,6 +136,15 @@ grep -qF "192.168.0.251 ${HOSTNAME}" /etc/hosts || echo "192.168.0.251 ${HOSTNAM
 # directly into the template instead and disable cloud-init's network module
 # entirely (same pattern already used for real installs — see
 # restore-1-install.sh's "network: {config: disabled}").
+#
+# Also force classic "eth0" naming via net.ifnames=0: systemd's predictable
+# network names bind eth0 to this VM's own MAC during the template's boot,
+# but every clone gets a fresh MAC (full clone), so that binding never
+# matches again and the device silently reappears as ensNN instead —
+# static config referencing "eth0" then matches nothing on any clone.
+sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 net.ifnames=0 biosdevname=0"/' /etc/default/grub
+update-grub
+
 mkdir -p /etc/network/interfaces.d
 cat > /etc/network/interfaces.d/50-ci-static << 'EOF'
 auto eth0
