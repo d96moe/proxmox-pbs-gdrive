@@ -169,6 +169,15 @@ EOF
 # directory, since a bare genericcloud image doesn't ship one.
 [ -f /etc/network/interfaces ] || echo "source-directory /etc/network/interfaces.d" > /etc/network/interfaces
 grep -qF "source-directory /etc/network/interfaces.d" /etc/network/interfaces || echo "source-directory /etc/network/interfaces.d" >> /etc/network/interfaces
+
+# ifupdown2's "dns-nameservers" directive above needs the resolvconf package
+# to actually reach /etc/resolv.conf, which isn't installed here — silently
+# ignored otherwise. systemd-resolved's stub never gets populated either,
+# since nothing feeds it without networkd/NetworkManager. Write resolv.conf
+# directly instead.
+rm -f /etc/resolv.conf
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+
 mkdir -p /etc/cloud/cloud.cfg.d
 echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
 
