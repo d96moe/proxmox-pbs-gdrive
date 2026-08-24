@@ -118,16 +118,6 @@ for i in $(seq 1 24); do
     [ "$i" -eq 24 ] && { echo "ERROR: VM did not become reachable"; qm stop ${TEMPLATE_ID}; exit 1; }
 done
 
-# cloud-init's own SSH key injection silently fails on this image: its
-# ssh_util module errors on a missing /root/.ssh (it doesn't create the
-# parent directory itself), so authorized_keys never gets written except on
-# the template's own first boot — clones never get root's key. Bake the key
-# directly into the template's disk instead, same reasoning as the network
-# fix above.
-ssh ${SSH_OPTS} root@${VM_IP} "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
-scp ${SSH_OPTS} "${JENKINS_PUBKEY_FILE}" root@${VM_IP}:/root/.ssh/authorized_keys
-ssh ${SSH_OPTS} root@${VM_IP} "chmod 600 /root/.ssh/authorized_keys"
-
 echo "Installing Proxmox VE on template VM..."
 ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
@@ -209,6 +199,20 @@ cloud-init clean --logs --seed
 rm -f /etc/machine-id
 touch /etc/machine-id
 ENDSSH
+
+# Installing proxmox-ve replaces /root/.ssh/authorized_keys with a symlink
+# into /etc/pve/priv/authorized_keys (PVE's cluster-wide key store) — but
+# pve-cluster.service never comes up on these single-node CI clones (no
+# quorum), so /etc/pve is never mounted and the symlink dangles, breaking
+# SSH auth on every clone even though the template itself could still log
+# in (its own /etc/pve was mounted during this very setup run). Both
+# cloud-init's key injection (see below) AND this symlink defeat a baked-in
+# key, so this must run last, after proxmox-ve is installed, and must
+# replace whatever's there rather than just write alongside it.
+echo "Replacing PVE's cluster-linked authorized_keys with a real file..."
+ssh ${SSH_OPTS} root@${VM_IP} "mkdir -p /root/.ssh && chmod 700 /root/.ssh && rm -f /root/.ssh/authorized_keys"
+scp ${SSH_OPTS} "${JENKINS_PUBKEY_FILE}" root@${VM_IP}:/root/.ssh/authorized_keys
+ssh ${SSH_OPTS} root@${VM_IP} "chmod 600 /root/.ssh/authorized_keys"
 
 # =============================================================================
 echo "=== Step 8: Shut down and convert to template ==="
