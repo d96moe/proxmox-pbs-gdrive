@@ -30,6 +30,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARCH="$(uname -m)"
 
+# Read this machine's own Debian codename rather than hardcoding one —
+# every apt repo line below used to pin a specific codename (bookworm on
+# x86, trixie on arm64), which breaks the moment Debian moves on.
+. /etc/os-release
+
 # Stop all background apt services and timers to prevent lock conflicts
 systemctl stop apt-daily.timer apt-daily-upgrade.timer \
     apt-daily.service apt-daily-upgrade.service \
@@ -297,7 +302,7 @@ EOF
     curl -fsSL https://download.lierfang.com/pxcloud/pxvirt/pveport.gpg \
         | gpg --batch --no-tty --dearmor \
         > /etc/apt/trusted.gpg.d/pxvirt.gpg
-    echo "deb https://download.lierfang.com/pxcloud/pxvirt trixie main" \
+    echo "deb https://download.lierfang.com/pxcloud/pxvirt ${VERSION_CODENAME} main" \
         > /etc/apt/sources.list.d/pxvirt.list
 
     # Temporarily add pipbs repo so we can compare versions before installing anything
@@ -306,7 +311,7 @@ EOF
     curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
         | gpg --batch --no-tty --dearmor \
         > /etc/apt/keyrings/pipbs.gpg
-    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ trixie main" \
+    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ ${VERSION_CODENAME} main" \
         > /etc/apt/sources.list.d/pipbs.list
     apt_get update
 
@@ -491,6 +496,7 @@ if [ "${ARCH}" = "aarch64" ]; then
 fi
 
 echo "=== Step 1: Install Proxmox Backup Server ==="
+echo "  Host OS codename: ${VERSION_CODENAME}"
 if [ "${ARCH}" = "aarch64" ]; then
     echo "  ARM64 detected — using community pipbs repository..."
     apt_get install -y ca-certificates curl gnupg unzip
@@ -498,11 +504,11 @@ if [ "${ARCH}" = "aarch64" ]; then
     curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
         | gpg --batch --no-tty --dearmor \
         > /etc/apt/keyrings/pipbs.gpg
-    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ trixie main" \
+    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ ${VERSION_CODENAME} main" \
         > /etc/apt/sources.list.d/pipbs.list
 else
     echo "  x86_64 detected — using official Proxmox repository..."
-    echo "deb http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription" \
+    echo "deb http://download.proxmox.com/debian/pbs ${VERSION_CODENAME} pbs-no-subscription" \
         > /etc/apt/sources.list.d/pbs.list
 fi
 apt_get update

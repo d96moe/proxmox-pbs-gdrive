@@ -238,13 +238,15 @@ echo "grub-pc grub-pc/install_devices_empty boolean false" | debconf-set-selecti
 
 DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-ve
 
-# Both enterprise repo lists are conffiles shipped by the pve-manager/pve
+# Both enterprise repo files are conffiles shipped by the pve-manager/pve
 # packages — removing them *before* install is pointless, dpkg just
 # recreates them as part of a fresh install. Remove them after instead, or
 # every subsequent apt-get (including restore-1-install.sh's on every
-# clone) hits a 401 from the subscription-only enterprise repo.
-rm -f /etc/apt/sources.list.d/pve-enterprise.list
-rm -f /etc/apt/sources.list.d/pbs-enterprise.list
+# clone) hits a 401 from the subscription-only enterprise repo. Glob
+# instead of naming the exact file: Proxmox ships these as *.list on
+# Bookworm but switched to deb822-format *.sources on Trixie — matching
+# the glob restore-1-install.sh already uses for PBS's own enterprise file.
+rm -f /etc/apt/sources.list.d/*enterprise*
 
 echo "Proxmox VE installed OK"
 
