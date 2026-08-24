@@ -134,6 +134,9 @@ echo "deb [arch=amd64] http://download.proxmox.com/debian/pve bookworm pve-no-su
 # Remove enterprise repo (requires subscription, causes 401)
 rm -f /etc/apt/sources.list.d/pve-enterprise.list
 
+# Fresh cloud image boots with its own apt-get running in the background
+# (cloud-init package step) — wait for it to release the lock first.
+while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do echo "  Waiting for apt lock..."; sleep 5; done
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -qq -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-ve
