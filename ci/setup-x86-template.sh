@@ -136,6 +136,7 @@ grep -qF "192.168.0.251 ${HOSTNAME}" /etc/hosts || echo "192.168.0.251 ${HOSTNAM
 # directly into the template instead and disable cloud-init's network module
 # entirely (same pattern already used for real installs — see
 # restore-1-install.sh's "network: {config: disabled}").
+mkdir -p /etc/network/interfaces.d
 cat > /etc/network/interfaces.d/50-ci-static << 'EOF'
 auto eth0
 iface eth0 inet static
@@ -143,9 +144,13 @@ iface eth0 inet static
     gateway 192.168.0.1
     dns-nameservers 8.8.8.8
 EOF
+# ifupdown2 isn't installed yet at this point (it lands as a proxmox-ve
+# dependency below) — make sure the main interfaces file sources this
+# directory, since a bare genericcloud image doesn't ship one.
+[ -f /etc/network/interfaces ] || echo "source-directory /etc/network/interfaces.d" > /etc/network/interfaces
+grep -qF "source-directory /etc/network/interfaces.d" /etc/network/interfaces || echo "source-directory /etc/network/interfaces.d" >> /etc/network/interfaces
 mkdir -p /etc/cloud/cloud.cfg.d
 echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
-ifup eth0 || true
 
 # Add Proxmox VE repo (no-subscription)
 curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg \
