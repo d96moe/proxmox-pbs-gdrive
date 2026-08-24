@@ -226,6 +226,16 @@ echo "deb [arch=amd64] http://download.proxmox.com/debian/pve ${VERSION_CODENAME
 while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do echo "  Waiting for apt lock..."; sleep 5; done
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -qq -y
+
+# grub-pc's postinst asks (via debconf) which disk to install the boot
+# sector to — normally preseeded by the Debian installer, but this VM's
+# disk came from importing a cloud image directly, so that answer was
+# never recorded. DEBIAN_FRONTEND=noninteractive doesn't supply a default
+# here, it just fails outright ("You must correct your GRUB install
+# devices before proceeding"). Preseed it to the actual OS disk.
+echo "grub-pc grub-pc/install_devices multiselect /dev/sda" | debconf-set-selections
+echo "grub-pc grub-pc/install_devices_empty boolean false" | debconf-set-selections
+
 DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-ve
 
 # Both enterprise repo lists are conffiles shipped by the pve-manager/pve
