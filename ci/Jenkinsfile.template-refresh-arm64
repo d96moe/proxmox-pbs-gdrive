@@ -1,0 +1,55 @@
+// =============================================================================
+// Jenkinsfile.template-refresh-arm64 — Weekly refresh of the arm64 CI template (VM 9002)
+//
+// Re-runs ci/setup-arm64-template.sh against the PVE host: destroys VM 9002
+// and rebuilds it from a freshly downloaded Debian Trixie arm64 cloud image
+// (no boot/upgrade needed — the "daily/latest" image build is the freshness
+// source), so the template's own package state stays close to current
+// instead of drifting further every week.
+//
+// Requires VM 9001 to already exist (the Jenkins SSH pubkey is extracted from
+// its config) — runs after ci/Jenkinsfile.template-refresh, and well before
+// the other Sunday/daily CI jobs that clone this template
+// (proxmox-ci-backup-arm64, proxmox-ci-dr-arm64).
+// =============================================================================
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    triggers {
+        cron('H 4 * * 0')  // 4:xx UTC Sunday — after the x86 refresh (H3), well before H17+/H19 jobs
+    }
+
+    environment {
+        PVE_HOST = "192.168.0.200"
+        SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
+    }
+
+    stages {
+        stage('Refresh arm64 template (VM 9002)') {
+            options { lock('ci-vm-arm64') }
+            steps {
+                echo "Deploying setup-arm64-template.sh to PVE host and rebuilding template 9002..."
+                sh """
+                    scp \${SSH_OPTS} ci/setup-arm64-template.sh root@\${PVE_HOST}:/root/setup-arm64-template.sh
+                    ssh \${SSH_OPTS} root@\${PVE_HOST} 'bash /root/setup-arm64-template.sh'
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "arm64 template refresh (VM 9002) completed — current Debian Trixie arm64 cloud image"
+        }
+        failure {
+            echo "arm64 template refresh FAILED — check manually before other arm64 CI jobs run (proxmox-ci-backup-arm64, proxmox-ci-dr-arm64 clone VM 9002)."
+        }
+    }
+}

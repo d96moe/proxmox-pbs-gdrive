@@ -158,7 +158,7 @@ proxmox-pbs-gdrive/
 └── ci/                       # CI pipeline — not needed for normal use
     ├── Jenkinsfile.*         # Jenkins pipeline definitions
     ├── config_ci*.env        # CI-specific config templates
-    ├── setup-*-template.sh   # One-time VM template creation scripts
+    ├── setup-*-template.sh   # VM template creation scripts (also re-run weekly by Jenkins to refresh the templates)
     └── spec/                 # ShellSpec integration tests
 ```
 

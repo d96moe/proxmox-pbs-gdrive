@@ -1,11 +1,15 @@
 #!/bin/bash
 # =============================================================================
-# ci/setup-x86-template.sh — One-time setup of x86_64 CI template VM
+# ci/setup-x86-template.sh — (Re)build the x86_64 CI template VM
 #
 # Creates template VM 9001: Debian Bookworm x86_64 with Proxmox VE installed.
 # No PBS — restore-1-install.sh installs it during CI.
 #
-# Run once directly on the PVE host:
+# Destructive/idempotent: destroys and recreates VM 9001 from scratch, so
+# re-running it is exactly how the template gets refreshed. Run directly on
+# the PVE host, or via the Jenkins job proxmox-ci-template-refresh
+# (ci/Jenkinsfile.template-refresh), which runs this weekly, before the other
+# weekly/daily CI jobs that clone this template.
 #   bash ci/setup-x86-template.sh
 #
 # What it does:
@@ -36,13 +40,11 @@ JENKINS_PUBKEY_FILE="/root/.ssh/jenkins_ci.pub"
 [ -f "${JENKINS_PUBKEY_FILE}" ] || { echo "ERROR: Jenkins pubkey not found at ${JENKINS_PUBKEY_FILE}"; exit 1; }
 
 # =============================================================================
-echo "=== Step 1: Download Debian Bookworm x86_64 cloud image ==="
+echo "=== Step 1: Download latest Debian Bookworm x86_64 cloud image ==="
 # =============================================================================
-if [ -f "${IMAGE_PATH}" ]; then
-    echo "Already downloaded: ${IMAGE_PATH}"
-else
-    wget --progress=dot:giga -O "${IMAGE_PATH}" "${IMAGE_URL}"
-fi
+# Always re-fetch — this script is re-run weekly to keep the template current,
+# so a cached copy would defeat the point.
+wget --progress=dot:giga -O "${IMAGE_PATH}" "${IMAGE_URL}"
 
 # =============================================================================
 echo "=== Step 2: Destroy existing VM ${TEMPLATE_ID} if present ==="
@@ -133,6 +135,7 @@ echo "deb [arch=amd64] http://download.proxmox.com/debian/pve bookworm pve-no-su
 rm -f /etc/apt/sources.list.d/pve-enterprise.list
 
 apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -qq -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-ve
 
 # Remove enterprise PBS repo if installed

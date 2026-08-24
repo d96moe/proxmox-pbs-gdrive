@@ -1,0 +1,54 @@
+// =============================================================================
+// Jenkinsfile.template-refresh — Weekly refresh of the x86_64 CI template (VM 9001)
+//
+// Re-runs ci/setup-x86-template.sh against the PVE host: destroys VM 9001 and
+// rebuilds it from a freshly downloaded Debian Bookworm cloud image, then
+// dist-upgrades and reinstalls Proxmox VE, so the template's own package
+// state stays close to current instead of drifting further every week.
+//
+// Runs early Sunday morning, before the other Sunday/daily CI jobs that clone
+// this template (proxmox-ci-backup, proxmox-ci-dr, and their arm64
+// counterparts, which depend on this one running first — see
+// ci/Jenkinsfile.template-refresh-arm64).
+// =============================================================================
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    triggers {
+        cron('H 3 * * 0')  // 3:xx UTC Sunday — well before H17 (daily backup) / H17+H19 (Sunday DR jobs)
+    }
+
+    environment {
+        PVE_HOST = "192.168.0.200"
+        SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
+    }
+
+    stages {
+        stage('Refresh x86 template (VM 9001)') {
+            options { lock('ci-vm-x86') }
+            steps {
+                echo "Deploying setup-x86-template.sh to PVE host and rebuilding template 9001..."
+                sh """
+                    scp \${SSH_OPTS} ci/setup-x86-template.sh root@\${PVE_HOST}:/root/setup-x86-template.sh
+                    ssh \${SSH_OPTS} root@\${PVE_HOST} 'bash /root/setup-x86-template.sh'
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "x86 template refresh (VM 9001) completed — current Debian Bookworm + current packages"
+        }
+        failure {
+            echo "x86 template refresh FAILED — VM 9001 may be left in a partial/destroyed state. Check manually before other CI jobs run (and before the arm64 refresh job, which reads the Jenkins SSH pubkey from 9001)."
+        }
+    }
+}

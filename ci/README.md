@@ -12,7 +12,7 @@
 
 ---
 
-Two Jenkins pipelines automatically verify the scripts end-to-end on real Proxmox VMs.
+Jenkins pipelines automatically verify the scripts end-to-end on real Proxmox VMs, and keep the CI templates themselves refreshed weekly.
 
 ---
 
@@ -20,12 +20,18 @@ Two Jenkins pipelines automatically verify the scripts end-to-end on real Proxmo
 
 | Pipeline | Jenkins job | Jenkinsfile | Schedule | What it tests |
 |---|---|---|---|---|
+| Template refresh (x86) | `proxmox-ci-template-refresh` | `ci/Jenkinsfile.template-refresh` | Sundays ~03:00 | Rebuilds CI template VM 9001 from a fresh Bookworm image |
+| Template refresh (ARM64) | `proxmox-ci-template-refresh-arm64` | `ci/Jenkinsfile.template-refresh-arm64` | Sundays ~04:00 | Rebuilds CI template VM 9002 from a fresh Trixie arm64 image |
 | Scenario A | `proxmox-ci-backup` | `ci/Jenkinsfile.shellspec` | Nightly ~21:00 | Install + PBS backup + GDrive backup |
 | Scenario B (DR) | `proxmox-ci-dr` | `ci/Jenkinsfile.shellspec-dr` | Sundays ~21:00 | Full DR restore from GDrive |
 | Scenario A (ARM64) | `proxmox-ci-backup-arm64` | `ci/Jenkinsfile.shellspec-arm64` | Nightly ~22:00 | Same as A, emulated arm64 on x86_64 host |
 | Scenario B (ARM64) | `proxmox-ci-dr-arm64` | `ci/Jenkinsfile.shellspec-dr-arm64` | Sundays ~23:00 | Full DR restore, emulated arm64 on x86_64 host |
 
 Scenario B depends on Scenario A having run at least once (needs a restic snapshot and config tarball on Google Drive).
+
+The two template-refresh jobs exist so the CI template VMs (9001/9002) don't silently drift further behind current Debian every week — they destroy and rebuild the template from a fresh cloud image each run, before any other job that day clones it. The x86 refresh must run before the arm64 one: the arm64 template's cloud-init SSH key is extracted live from VM 9001's config. See `ci/setup-x86-template.sh` and `ci/setup-arm64-template.sh` — same scripts used for the original one-time setup, just re-run weekly now. `restore-1-install.sh`'s own `apt_get dist-upgrade` during restore stays in place regardless — it's what makes a genuine disaster recovery (no template at all) work, and is a harmless no-op against an already-fresh template.
+
+Side benefit: since the same-day CI runs (install, backup, DR restore) exercise this freshly-updated OS/package set before any real production host gets manually `apt upgrade`d, a weekly CI failure here is an early warning that a pending upstream Debian/Proxmox package update breaks something — a canary, ahead of applying that same update in prod. This happens at two layers: the refresh job itself tests a clean `apt-get install proxmox-ve` against the latest OS image, and the same-day downstream jobs test the full `restore-1-install.sh` install flow against that same fresh image — so either a plain package install or this repo's own install logic breaking on the latest packages gets caught here first.
 
 ---
 
@@ -145,10 +151,10 @@ The test VMs are **created by Jenkins** from these templates at the start of eac
 
   **Step 3** — Before running the template setup scripts on the PVE host, make the public key available there:
   ```bash
-  mkdir -p /var/lib/jenkins/.ssh
-  pct exec 200 -- cat /var/lib/jenkins/.ssh/id_ed25519.pub > /var/lib/jenkins/.ssh/id_ed25519.pub
+  mkdir -p /root/.ssh
+  pct exec 200 -- cat /var/lib/jenkins/.ssh/id_ed25519.pub > /root/.ssh/jenkins_ci.pub
   ```
-  The setup scripts read this path on the PVE host to inject the pubkey into cloud-init.
+  `ci/setup-x86-template.sh` reads `/root/.ssh/jenkins_ci.pub` on the PVE host to inject the pubkey into cloud-init. This only needs doing once — the arm64 template script re-derives its own copy from VM 9001's config each run, so it stays in sync automatically as long as the x86 refresh keeps running.
 
 **CI config files (`ci/config_ci.env`, `ci/config_ci_arm64.env`):**
 
@@ -171,10 +177,14 @@ For each pipeline, set the **Script Path** in the Jenkins job to the Jenkinsfile
 
 | Job | Script Path |
 |---|---|
+| proxmox-ci-template-refresh | `ci/Jenkinsfile.template-refresh` |
+| proxmox-ci-template-refresh-arm64 | `ci/Jenkinsfile.template-refresh-arm64` |
 | proxmox-ci-backup | `ci/Jenkinsfile.shellspec` |
 | proxmox-ci-dr | `ci/Jenkinsfile.shellspec-dr` |
 | proxmox-ci-backup-arm64 | `ci/Jenkinsfile.shellspec-arm64` |
 | proxmox-ci-dr-arm64 | `ci/Jenkinsfile.shellspec-dr-arm64` |
+
+The two template-refresh jobs need no `ci/config_ci*.env` setup and don't clone a test VM — they SSH straight to the PVE host and rebuild templates 9001/9002 in place, so the only prerequisite is that the SSH key from Step 2/3 above is already working.
 
 ### VM Templates
 

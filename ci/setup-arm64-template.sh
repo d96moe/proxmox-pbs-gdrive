@@ -1,12 +1,18 @@
 #!/bin/bash
 # =============================================================================
-# scripts/setup-arm64-template.sh — One-time setup of arm64 CI template VM
+# ci/setup-arm64-template.sh — (Re)build the arm64 CI template VM
 #
 # Creates template VM 9002: vanilla Debian Trixie arm64 cloud image.
 # No PVE, no PBS — the CI pipeline tests those via restore-1-install.sh.
 #
-# Run once directly on the PVE host:
-#   bash scripts/setup-arm64-template.sh
+# Destructive/idempotent: destroys and recreates VM 9002 from scratch, so
+# re-running it is exactly how the template gets refreshed. Run directly on
+# the PVE host, or via the Jenkins job proxmox-ci-template-refresh-arm64
+# (ci/Jenkinsfile.template-refresh-arm64), which runs this weekly, before the
+# other weekly/daily CI jobs that clone this template. Requires template 9001
+# to exist already (Jenkins pubkey is extracted from it) — the x86 refresh
+# job runs first for this reason.
+#   bash ci/setup-arm64-template.sh
 #
 # Fast — no booting required, just disk import + cloud-init config.
 # =============================================================================
@@ -39,13 +45,12 @@ ln -sf /usr/share/AAVMF/AAVMF_VARS.fd /usr/share/pve-edk2-firmware/AAVMF_VARS.fd
 echo "AAVMF firmware: OK"
 
 # =============================================================================
-echo "=== Step 2: Download Debian Trixie arm64 cloud image ==="
+echo "=== Step 2: Download latest Debian Trixie arm64 cloud image ==="
 # =============================================================================
-if [ -f "$IMAGE_PATH" ]; then
-    echo "Already downloaded: $IMAGE_PATH"
-else
-    wget --progress=dot:giga -O "$IMAGE_PATH" "$IMAGE_URL"
-fi
+# Always re-fetch — the URL points at "daily/latest", and this script is
+# re-run weekly to keep the template current, so a cached copy would defeat
+# the point (and previously meant "latest" only meant "latest at first run").
+wget --progress=dot:giga -O "$IMAGE_PATH" "$IMAGE_URL"
 
 # =============================================================================
 echo "=== Step 3: Destroy existing VM $TEMPLATE_ID if present ==="
