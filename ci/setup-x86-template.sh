@@ -171,6 +171,11 @@ grep -qF "source-directory /etc/network/interfaces.d" /etc/network/interfaces ||
 mkdir -p /etc/cloud/cloud.cfg.d
 echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
 
+# ifupdown2 (not networkd) manages eth0 here, so systemd-networkd-wait-online
+# just blocks boot for ~2 minutes waiting on an interface it'll never manage,
+# before giving up. Mask it so boot doesn't stall on every clone.
+systemctl mask systemd-networkd-wait-online.service
+
 # Add Proxmox VE repo (no-subscription)
 curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg \
     -o /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
