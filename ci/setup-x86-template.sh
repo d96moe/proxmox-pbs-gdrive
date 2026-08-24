@@ -118,6 +118,16 @@ for i in $(seq 1 24); do
     [ "$i" -eq 24 ] && { echo "ERROR: VM did not become reachable"; qm stop ${TEMPLATE_ID}; exit 1; }
 done
 
+# cloud-init's own SSH key injection silently fails on this image: its
+# ssh_util module errors on a missing /root/.ssh (it doesn't create the
+# parent directory itself), so authorized_keys never gets written except on
+# the template's own first boot — clones never get root's key. Bake the key
+# directly into the template's disk instead, same reasoning as the network
+# fix above.
+ssh ${SSH_OPTS} root@${VM_IP} "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+scp ${SSH_OPTS} "${JENKINS_PUBKEY_FILE}" root@${VM_IP}:/root/.ssh/authorized_keys
+ssh ${SSH_OPTS} root@${VM_IP} "chmod 600 /root/.ssh/authorized_keys"
+
 echo "Installing Proxmox VE on template VM..."
 ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
