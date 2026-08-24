@@ -127,6 +127,17 @@ HOSTNAME="restore-ci"
 hostnamectl set-hostname "${HOSTNAME}"
 grep -qF "192.168.0.251 ${HOSTNAME}" /etc/hosts || echo "192.168.0.251 ${HOSTNAME}.local ${HOSTNAME}" >> /etc/hosts
 
+# Installing proxmox-ve below replaces /root/.ssh/authorized_keys with a
+# symlink into /etc/pve/priv/authorized_keys (PVE's cluster-wide key store).
+# pve-cluster.service never reaches quorum on a single-node CI VM, so
+# /etc/pve is never mounted and that symlink dangles — breaking key auth for
+# ANY new SSH connection from that point on, including within this same
+# build (not just on later clones). Save the real key content now, while
+# it's still a real file, so it can be restored after the symlink appears —
+# all inside this one already-authenticated session, since a fresh
+# connection made after the symlink exists can't authenticate at all.
+cp /root/.ssh/authorized_keys /root/.ssh/authorized_keys.bak
+
 # Every CI clone of this template uses the same fixed IP (192.168.0.251), so
 # there's no need for cloud-init to template per-instance network config —
 # and on this image it's unreliable anyway: installing proxmox-ve pulls in
@@ -187,6 +198,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-ve
 rm -f /etc/apt/sources.list.d/pbs-enterprise.list
 
 echo "Proxmox VE installed OK"
+
+# Restore the real key file over whatever proxmox-ve just replaced it with
+# (symlink into /etc/pve, which is unmounted here and on every clone).
+rm -f /root/.ssh/authorized_keys
+mv /root/.ssh/authorized_keys.bak /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
 pvesh get /version
 
 # This VM booted once already (to install PVE above), so cloud-init has
@@ -199,20 +216,6 @@ cloud-init clean --logs --seed
 rm -f /etc/machine-id
 touch /etc/machine-id
 ENDSSH
-
-# Installing proxmox-ve replaces /root/.ssh/authorized_keys with a symlink
-# into /etc/pve/priv/authorized_keys (PVE's cluster-wide key store) — but
-# pve-cluster.service never comes up on these single-node CI clones (no
-# quorum), so /etc/pve is never mounted and the symlink dangles, breaking
-# SSH auth on every clone even though the template itself could still log
-# in (its own /etc/pve was mounted during this very setup run). Both
-# cloud-init's key injection (see below) AND this symlink defeat a baked-in
-# key, so this must run last, after proxmox-ve is installed, and must
-# replace whatever's there rather than just write alongside it.
-echo "Replacing PVE's cluster-linked authorized_keys with a real file..."
-ssh ${SSH_OPTS} root@${VM_IP} "mkdir -p /root/.ssh && chmod 700 /root/.ssh && rm -f /root/.ssh/authorized_keys"
-scp ${SSH_OPTS} "${JENKINS_PUBKEY_FILE}" root@${VM_IP}:/root/.ssh/authorized_keys
-ssh ${SSH_OPTS} root@${VM_IP} "chmod 600 /root/.ssh/authorized_keys"
 
 # =============================================================================
 echo "=== Step 8: Shut down and convert to template ==="
