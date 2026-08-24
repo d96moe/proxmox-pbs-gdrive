@@ -140,7 +140,7 @@ The Jenkinsfiles and setup scripts contain IPs specific to this setup. Change th
 The test VMs are **created by Jenkins** from these templates at the start of each build and destroyed afterwards. No persistent test node to maintain.
 
 **Jenkins credentials** (configure in Jenkins → Manage Credentials):
-- One SSH key pair is used for everything — SSHing into the PVE host to run `qm` commands, and SSHing into the cloned test VMs. The template setup scripts inject the public key into the templates via cloud-init.
+- One SSH key pair is used for everything — SSHing into the PVE host to run `qm` commands, and SSHing into the cloned test VMs. `ci/setup-arm64-template.sh` injects the public key via cloud-init (the arm64 template never boots during its own build, so cloud-init gets a genuine first run on every clone). `ci/setup-x86-template.sh` instead bakes the key into a real `/root/.ssh/authorized_keys` file directly, after installing proxmox-ve — cloud-init's own key injection is unreliable there (installing proxmox-ve turns that path into a symlink into `/etc/pve`, which is never mounted on these single-node clones, so a cloud-init-injected key silently stops working; see the commit history around 2026-08-24 for the full chain of x86 template network/auth fixes if this needs revisiting).
 
   **Step 1** — Generate the key inside LXC 200 (where Jenkins runs):
   ```bash
@@ -154,7 +154,7 @@ The test VMs are **created by Jenkins** from these templates at the start of eac
   mkdir -p /root/.ssh
   pct exec 200 -- cat /var/lib/jenkins/.ssh/id_ed25519.pub > /root/.ssh/jenkins_ci.pub
   ```
-  `ci/setup-x86-template.sh` reads `/root/.ssh/jenkins_ci.pub` on the PVE host to inject the pubkey into cloud-init. This only needs doing once — the arm64 template script re-derives its own copy from VM 9001's config each run, so it stays in sync automatically as long as the x86 refresh keeps running.
+  `ci/setup-x86-template.sh` reads `/root/.ssh/jenkins_ci.pub` on the PVE host and copies it directly into the template's `authorized_keys` (see above — not via cloud-init). This only needs doing once — the arm64 template script re-derives its own copy from VM 9001's config each run, so it stays in sync automatically as long as the x86 refresh keeps running.
 
 **CI config files (`ci/config_ci.env`, `ci/config_ci_arm64.env`):**
 
