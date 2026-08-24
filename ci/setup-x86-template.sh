@@ -2,7 +2,8 @@
 # =============================================================================
 # ci/setup-x86-template.sh — (Re)build the x86_64 CI template VM
 #
-# Creates template VM 9001: Debian Bookworm x86_64 with Proxmox VE installed.
+# Creates template VM 9001: current Debian stable x86_64 (resolved
+# dynamically, not pinned to a codename) with Proxmox VE installed.
 # No PBS — restore-1-install.sh installs it during CI.
 #
 # Destructive/idempotent: destroys and recreates VM 9001 from scratch, so
@@ -13,7 +14,7 @@
 #   bash ci/setup-x86-template.sh
 #
 # What it does:
-#   1. Download Debian Bookworm x86_64 cloud image
+#   1. Resolve current Debian stable codename, download that x86_64 cloud image
 #   2. Create VM 9001 with OS disk + PBS data disk + cloud-init
 #   3. Boot VM, install Proxmox VE (official repo)
 #   4. Reset cloud-init state (so clones get a real first boot, not a
@@ -32,9 +33,22 @@ GATEWAY="192.168.0.1"
 STORAGE="local-lvm"
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
 
-# Debian Bookworm x86_64 cloud image
-IMAGE_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
-IMAGE_PATH="/var/lib/vz/template/iso/debian-12-genericcloud-amd64.qcow2"
+# Debian x86_64 cloud image — codename resolved dynamically below, not
+# hardcoded, so this template always follows whatever Debian currently
+# calls "stable" (including future major bumps) rather than being pinned
+# to the release that existed when this script was written.
+echo "=== Step 1: Resolve current Debian stable codename + image filename ==="
+DEBIAN_CODENAME=$(curl -fsSL https://deb.debian.org/debian/dists/stable/Release | awk '/^Codename:/{print $2}')
+[ -z "${DEBIAN_CODENAME}" ] && { echo "ERROR: could not resolve current Debian stable codename"; exit 1; }
+echo "Current Debian stable: ${DEBIAN_CODENAME}"
+
+IMAGE_FILENAME=$(curl -fsSL "https://cloud.debian.org/images/cloud/${DEBIAN_CODENAME}/latest/" \
+    | grep -oE 'debian-[0-9]+-genericcloud-amd64\.qcow2' | sort -u | head -1)
+[ -z "${IMAGE_FILENAME}" ] && { echo "ERROR: could not find a genericcloud-amd64 image for ${DEBIAN_CODENAME}"; exit 1; }
+echo "Image: ${IMAGE_FILENAME}"
+
+IMAGE_URL="https://cloud.debian.org/images/cloud/${DEBIAN_CODENAME}/latest/${IMAGE_FILENAME}"
+IMAGE_PATH="/var/lib/vz/template/iso/${IMAGE_FILENAME}"
 
 # Jenkins SSH pubkey — copy from LXC 200 before running this script:
 #   pct exec 200 -- cat /var/lib/jenkins/.ssh/id_ed25519.pub > /root/.ssh/jenkins_ci.pub
@@ -42,14 +56,14 @@ JENKINS_PUBKEY_FILE="/root/.ssh/jenkins_ci.pub"
 [ -f "${JENKINS_PUBKEY_FILE}" ] || { echo "ERROR: Jenkins pubkey not found at ${JENKINS_PUBKEY_FILE}"; exit 1; }
 
 # =============================================================================
-echo "=== Step 1: Download latest Debian Bookworm x86_64 cloud image ==="
+echo "=== Step 2: Download ${IMAGE_FILENAME} ==="
 # =============================================================================
 # Always re-fetch — this script is re-run weekly to keep the template current,
 # so a cached copy would defeat the point.
 wget --progress=dot:giga -O "${IMAGE_PATH}" "${IMAGE_URL}"
 
 # =============================================================================
-echo "=== Step 2: Destroy existing VM ${TEMPLATE_ID} if present ==="
+echo "=== Step 3: Destroy existing VM ${TEMPLATE_ID} if present ==="
 # =============================================================================
 if qm status ${TEMPLATE_ID} &>/dev/null; then
     qm stop ${TEMPLATE_ID} 2>/dev/null || true
@@ -59,7 +73,7 @@ if qm status ${TEMPLATE_ID} &>/dev/null; then
 fi
 
 # =============================================================================
-echo "=== Step 3: Create x86_64 VM ==="
+echo "=== Step 4: Create x86_64 VM ==="
 # =============================================================================
 qm create ${TEMPLATE_ID} \
     --name "${TEMPLATE_NAME}" \
@@ -73,12 +87,12 @@ qm create ${TEMPLATE_ID} \
     --vga serial0
 
 # =============================================================================
-echo "=== Step 4: Import cloud image as OS disk ==="
+echo "=== Step 5: Import cloud image as OS disk ==="
 # =============================================================================
 qm importdisk ${TEMPLATE_ID} "${IMAGE_PATH}" ${STORAGE}
 
 # =============================================================================
-echo "=== Step 5: Attach disks ==="
+echo "=== Step 6: Attach disks ==="
 # =============================================================================
 qm set ${TEMPLATE_ID} \
     --scsi0 ${STORAGE}:vm-${TEMPLATE_ID}-disk-0,discard=on \
@@ -94,7 +108,7 @@ qm set ${TEMPLATE_ID} --scsi1 ${STORAGE}:4,format=raw
 qm set ${TEMPLATE_ID} --ide2 ${STORAGE}:cloudinit,media=cdrom
 
 # =============================================================================
-echo "=== Step 6: Configure cloud-init ==="
+echo "=== Step 7: Configure cloud-init ==="
 # =============================================================================
 TMPKEY=$(mktemp)
 cat "${JENKINS_PUBKEY_FILE}" > "${TMPKEY}"
@@ -107,7 +121,7 @@ qm set ${TEMPLATE_ID} \
 rm -f "${TMPKEY}"
 
 # =============================================================================
-echo "=== Step 7: Boot VM and install Proxmox VE ==="
+echo "=== Step 8: Boot VM and install Proxmox VE ==="
 # =============================================================================
 qm start ${TEMPLATE_ID}
 echo "Waiting for SSH at ${VM_IP} (max 120s)..."
@@ -194,10 +208,16 @@ echo "network: {config: disabled}" > /etc/cloud/cloud.cfg.d/99-disable-network-c
 # before giving up. Mask it so boot doesn't stall on every clone.
 systemctl mask systemd-networkd-wait-online.service
 
-# Add Proxmox VE repo (no-subscription)
-curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg \
-    -o /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
-echo "deb [arch=amd64] http://download.proxmox.com/debian/pve bookworm pve-no-subscription" \
+# Add Proxmox VE repo (no-subscription) — read the codename from this
+# guest's own /etc/os-release rather than hardcoding it, so it always
+# matches whatever Debian release was actually just installed. If Proxmox
+# hasn't published a repo for a brand new Debian codename yet, this fails
+# loudly here rather than silently installing against a stale/wrong repo.
+. /etc/os-release
+echo "Guest OS codename: ${VERSION_CODENAME}"
+curl -fsSL "https://enterprise.proxmox.com/debian/proxmox-release-${VERSION_CODENAME}.gpg" \
+    -o "/etc/apt/trusted.gpg.d/proxmox-release-${VERSION_CODENAME}.gpg"
+echo "deb [arch=amd64] http://download.proxmox.com/debian/pve ${VERSION_CODENAME} pve-no-subscription" \
     > /etc/apt/sources.list.d/pve-install-repo.list
 
 # Fresh cloud image boots with its own apt-get running in the background
@@ -237,7 +257,7 @@ touch /etc/machine-id
 ENDSSH
 
 # =============================================================================
-echo "=== Step 8: Shut down and convert to template ==="
+echo "=== Step 9: Shut down and convert to template ==="
 # =============================================================================
 qm shutdown ${TEMPLATE_ID}
 echo "Waiting for VM to stop..."
@@ -250,7 +270,7 @@ qm template ${TEMPLATE_ID}
 
 echo ""
 echo "=== x86_64 template ${TEMPLATE_ID} (${TEMPLATE_NAME}) created ==="
-echo "    Base OS:      Debian Bookworm x86_64 (cloud image)"
+echo "    Base OS:      Debian ${DEBIAN_CODENAME} x86_64 (cloud image)"
 echo "    PVE:          installed (pve-no-subscription repo)"
 echo "    PBS:          NOT pre-installed (tested by restore-1-install.sh in CI)"
 echo "    IP:           ${VM_IP}"
