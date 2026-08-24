@@ -16,7 +16,9 @@
 #   1. Download Debian Bookworm x86_64 cloud image
 #   2. Create VM 9001 with OS disk + PBS data disk + cloud-init
 #   3. Boot VM, install Proxmox VE (official repo)
-#   4. Shut down, convert to template
+#   4. Reset cloud-init state (so clones get a real first boot, not a
+#      "already provisioned" skip that leaves networking down)
+#   5. Shut down, convert to template
 #
 # Template is used by: proxmox-ci-backup, proxmox-ci-dr
 # =============================================================================
@@ -147,6 +149,16 @@ rm -f /etc/apt/sources.list.d/pbs-enterprise.list
 
 echo "Proxmox VE installed OK"
 pvesh get /version
+
+# This VM booted once already (to install PVE above), so cloud-init has
+# already marked itself "done" for this instance-id on disk. Without
+# clearing that state, every VM cloned from this template inherits the
+# same already-provisioned instance-id and cloud-init skips re-running
+# network config on first boot — leaving eth0 present but never brought up.
+echo "Resetting cloud-init state so clones get a genuine first boot..."
+cloud-init clean --logs --seed
+rm -f /etc/machine-id
+touch /etc/machine-id
 ENDSSH
 
 # =============================================================================
