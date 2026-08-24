@@ -192,9 +192,6 @@ curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg \
 echo "deb [arch=amd64] http://download.proxmox.com/debian/pve bookworm pve-no-subscription" \
     > /etc/apt/sources.list.d/pve-install-repo.list
 
-# Remove enterprise repo (requires subscription, causes 401)
-rm -f /etc/apt/sources.list.d/pve-enterprise.list
-
 # Fresh cloud image boots with its own apt-get running in the background
 # (cloud-init package step) — wait for it to release the locks first.
 # apt-get update needs the lists lock specifically, not just dpkg's.
@@ -203,7 +200,12 @@ apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -qq -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-ve
 
-# Remove enterprise PBS repo if installed
+# Both enterprise repo lists are conffiles shipped by the pve-manager/pve
+# packages — removing them *before* install is pointless, dpkg just
+# recreates them as part of a fresh install. Remove them after instead, or
+# every subsequent apt-get (including restore-1-install.sh's on every
+# clone) hits a 401 from the subscription-only enterprise repo.
+rm -f /etc/apt/sources.list.d/pve-enterprise.list
 rm -f /etc/apt/sources.list.d/pbs-enterprise.list
 
 echo "Proxmox VE installed OK"
