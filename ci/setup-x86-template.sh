@@ -136,6 +136,16 @@ echo "Installing Proxmox VE on template VM..."
 ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 set -euo pipefail
 
+# Cloud-init runs its own package install stage in the background right after
+# boot, holding the dpkg/apt locks while it does. Waiting for the locks to be
+# free at one point in time (below) isn't enough — dist-upgrade can trigger
+# follow-up package hooks, and cloud-init can reacquire the lock again in the
+# gap before the later proxmox-ve install, which is exactly what caused this
+# script to fail once already ("held by process 1229 (apt-get)"). Block until
+# cloud-init's entire bootstrap (including its own apt usage) is genuinely
+# finished before this script touches apt at all, rather than racing it.
+cloud-init status --wait
+
 # Hostname — must resolve to itself for pve-cluster to start
 HOSTNAME="restore-ci"
 hostnamectl set-hostname "${HOSTNAME}"
@@ -236,6 +246,10 @@ DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -qq -y
 echo "grub-pc grub-pc/install_devices multiselect /dev/sda" | debconf-set-selections
 echo "grub-pc grub-pc/install_devices_empty boolean false" | debconf-set-selections
 
+# Second guard, cheap insurance: dist-upgrade above can itself trigger
+# follow-up package hooks that briefly reacquire the lock, even after the
+# cloud-init --wait above already cleared its own usage.
+while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do echo "  Waiting for apt lock..."; sleep 5; done
 DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-ve
 
 # Both enterprise repo files are conffiles shipped by the pve-manager/pve
