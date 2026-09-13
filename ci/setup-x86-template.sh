@@ -144,7 +144,13 @@ set -euo pipefail
 # script to fail once already ("held by process 1229 (apt-get)"). Block until
 # cloud-init's entire bootstrap (including its own apt usage) is genuinely
 # finished before this script touches apt at all, rather than racing it.
-cloud-init status --wait
+# `--wait` blocks until cloud-init is no longer running either way; exit 2
+# means "done, but logged some recoverable error" (common and often benign on
+# cloud images), not "still running" — under set -e that still aborted this
+# whole script before it got anywhere. Only still-running (it wouldn't have
+# returned) or a real hard failure matters for lock purposes, and cloud-init
+# not running any more is exactly what we need regardless of its own verdict.
+cloud-init status --wait || true
 
 # Hostname — must resolve to itself for pve-cluster to start
 HOSTNAME="restore-ci"
