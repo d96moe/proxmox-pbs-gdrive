@@ -512,6 +512,10 @@ else
         > /etc/apt/sources.list.d/pbs.list
 fi
 apt_get update
+# Bring the base image's already-installed packages (e.g. librados2) in line with
+# the current repo index before installing PBS — otherwise a freshly built image
+# can hit unmet dependencies when upstream has moved past what the image shipped with.
+apt_get upgrade -y
 
 # ARM64 only: check compatibility BEFORE installing pipbs.
 # If Step 0 already ran _arm64_check_compat and set PIPBS_PINNED_VERSION, use it.
