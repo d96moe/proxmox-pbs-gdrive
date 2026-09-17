@@ -35,6 +35,15 @@ ARCH="$(uname -m)"
 # x86, trixie on arm64), which breaks the moment Debian moves on.
 . /etc/os-release
 
+# A freshly booted cloud-init VM runs its own background package dist-upgrade
+# (visible in /var/log/apt/history.log right at boot time). If this script's
+# own apt calls race ahead of that instead of waiting for it, they can hit the
+# package DB mid-transaction — e.g. Ceph libs half-upgraded — and fail with
+# unmet dependencies that look identical to a genuinely broken repo. Wait for
+# cloud-init to fully finish first, same fix already applied to the template
+# build script (setup-x86-template.sh) for the identical race.
+cloud-init status --wait || true
+
 # Stop all background apt services and timers to prevent lock conflicts
 systemctl stop apt-daily.timer apt-daily-upgrade.timer \
     apt-daily.service apt-daily-upgrade.service \
