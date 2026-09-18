@@ -369,6 +369,18 @@ EOF
     done
     command -v pvesh &>/dev/null || { echo "ERROR: proxmox-ve install failed after 3 attempts"; exit 1; }
 
+    # The proxmox-ve package's own postinst re-registers its documented default
+    # apt source (bare mirrors.lierfang.com, codename bookworm) regardless of
+    # what we configured above — that domain sits behind Cloudflare's bot
+    # challenge and bookworm isn't even this host's codename. Force any
+    # lierfang.com source file back onto the working mirror + real codename.
+    if grep -rl "lierfang\.com" /etc/apt/sources.list.d/ 2>/dev/null | grep -q .; then
+        echo "  Fixing proxmox-ve's auto-added pxvirt repo entry (wrong mirror/codename)..."
+        for _f in $(grep -rl "lierfang\.com" /etc/apt/sources.list.d/ 2>/dev/null); do
+            echo "deb https://us.mirrors.lierfang.com/pxcloud/pxvirt ${VERSION_CODENAME} main" > "${_f}"
+        done
+    fi
+
     # Remove enterprise repos (require subscription, cause 401)
     rm -f /etc/apt/sources.list.d/*enterprise*
     apt_get update -qq
