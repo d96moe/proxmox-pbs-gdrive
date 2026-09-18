@@ -191,15 +191,20 @@ _arm64_check_compat() {
     echo ""
     echo "WARNING: Could not find a compatible version pair automatically."
     echo "  Proceeding with latest of both — check compatibility manually:"
-    echo "    pxvirt: https://download.lierfang.com/pxcloud/pxvirt"
+    echo "    pxvirt: https://us.mirrors.lierfang.com/pxcloud/pxvirt"
     echo "    pipbs:  https://github.com/dexogen/pipbs"
     echo ""
 }
 
-# Helper: fetch a GPG key with retries. Third-party GitHub Pages endpoints
-# (dexogen.github.io, download.lierfang.com) occasionally return transient
-# 403/5xx under rate limiting — a bare curl|gpg here has no way to recover
-# and kills the whole pipeline on a blip that's gone moments later.
+# Helper: fetch a GPG key with retries. Third-party mirror endpoints
+# occasionally return transient 403/5xx under rate limiting — a bare
+# curl|gpg here has no way to recover and kills the whole pipeline on a
+# blip that's gone moments later. (Note: download.lierfang.com/
+# mirrors.lierfang.com went behind a persistent Cloudflare bot-challenge
+# in 2026-09 that no amount of retrying can pass — that's why the repo
+# URLs below use us.mirrors.lierfang.com instead, confirmed not
+# Cloudflare-protected. Retries here still help with genuinely transient
+# blips like dexogen.github.io's.)
 fetch_gpg_key() {
     local url="$1" dest="$2" attempt
     for attempt in 1 2 3 4 5; do
@@ -326,9 +331,11 @@ iface vmbr0 inet static
     bridge-fd 0
 EOF
 
-    # Add pxvirt repo (community PVE ARM64 port)
-    fetch_gpg_key https://download.lierfang.com/pxcloud/pxvirt/pveport.gpg /etc/apt/trusted.gpg.d/pxvirt.gpg
-    echo "deb https://download.lierfang.com/pxcloud/pxvirt ${VERSION_CODENAME} main" \
+    # Add pxvirt repo (community PVE ARM64 port). Use the us. mirror subdomain,
+    # not the bare download.lierfang.com/mirrors.lierfang.com domain — that one
+    # sits behind a persistent Cloudflare bot-challenge (curl can never pass it).
+    fetch_gpg_key https://us.mirrors.lierfang.com/pxcloud/pxvirt/pveport.gpg /etc/apt/trusted.gpg.d/pxvirt.gpg
+    echo "deb https://us.mirrors.lierfang.com/pxcloud/pxvirt ${VERSION_CODENAME} main" \
         > /etc/apt/sources.list.d/pxvirt.list
 
     # Temporarily add pipbs repo so we can compare versions before installing anything
