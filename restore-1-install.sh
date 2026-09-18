@@ -196,6 +196,25 @@ _arm64_check_compat() {
     echo ""
 }
 
+# Helper: fetch a GPG key with retries. Third-party GitHub Pages endpoints
+# (dexogen.github.io, download.lierfang.com) occasionally return transient
+# 403/5xx under rate limiting — a bare curl|gpg here has no way to recover
+# and kills the whole pipeline on a blip that's gone moments later.
+fetch_gpg_key() {
+    local url="$1" dest="$2" attempt
+    for attempt in 1 2 3 4 5; do
+        if curl -fsSL "${url}" | gpg --batch --no-tty --dearmor > "${dest}" 2>/dev/null \
+            && [ -s "${dest}" ]; then
+            return 0
+        fi
+        echo "  GPG key fetch from ${url} failed (attempt ${attempt}/5), retrying in 10s..."
+        rm -f "${dest}"
+        sleep 10
+    done
+    echo "ERROR: could not fetch GPG key from ${url} after 5 attempts"
+    return 1
+}
+
 # Helper: kill any background apt and wait for lists lock before running apt-get
 apt_get() {
     # Stop apt-daily timers/services — they restart after reboot and can corrupt
@@ -308,18 +327,14 @@ iface vmbr0 inet static
 EOF
 
     # Add pxvirt repo (community PVE ARM64 port)
-    curl -fsSL https://download.lierfang.com/pxcloud/pxvirt/pveport.gpg \
-        | gpg --batch --no-tty --dearmor \
-        > /etc/apt/trusted.gpg.d/pxvirt.gpg
+    fetch_gpg_key https://download.lierfang.com/pxcloud/pxvirt/pveport.gpg /etc/apt/trusted.gpg.d/pxvirt.gpg
     echo "deb https://download.lierfang.com/pxcloud/pxvirt ${VERSION_CODENAME} main" \
         > /etc/apt/sources.list.d/pxvirt.list
 
     # Temporarily add pipbs repo so we can compare versions before installing anything
     apt_get install -y ca-certificates curl gnupg
     mkdir -p /etc/apt/keyrings
-    curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
-        | gpg --batch --no-tty --dearmor \
-        > /etc/apt/keyrings/pipbs.gpg
+    fetch_gpg_key https://dexogen.github.io/pipbs/gpg.key /etc/apt/keyrings/pipbs.gpg
     echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ ${VERSION_CODENAME} main" \
         > /etc/apt/sources.list.d/pipbs.list
     apt_get update
@@ -510,9 +525,7 @@ if [ "${ARCH}" = "aarch64" ]; then
     echo "  ARM64 detected — using community pipbs repository..."
     apt_get install -y ca-certificates curl gnupg unzip
     mkdir -p /etc/apt/keyrings
-    curl -fsSL https://dexogen.github.io/pipbs/gpg.key \
-        | gpg --batch --no-tty --dearmor \
-        > /etc/apt/keyrings/pipbs.gpg
+    fetch_gpg_key https://dexogen.github.io/pipbs/gpg.key /etc/apt/keyrings/pipbs.gpg
     echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ ${VERSION_CODENAME} main" \
         > /etc/apt/sources.list.d/pipbs.list
 else
