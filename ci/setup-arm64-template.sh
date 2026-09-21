@@ -131,6 +131,25 @@ echo "=== Step 9: Convert to template ==="
 # =============================================================================
 qm template $TEMPLATE_ID
 
+# =============================================================================
+echo "=== Step 10: Re-add to nightly-backup job ==="
+# =============================================================================
+# The --purge on this template's `qm destroy` step above strips its VMID from
+# any backup job it was in — that's PVE's own documented purge behavior
+# ("Remove VMID from configurations, like backup & replication jobs"), not a
+# bug. Every template refresh silently drops this template's backup coverage
+# unless we explicitly re-add it here. (Assumes a single vzdump job named
+# nightly-backup, matching this host's current setup.)
+CURRENT_VMIDS=$(pvesh get /cluster/backup --output-format json | grep -oP '"vmid":"\K[^"]*' | head -1)
+if [ -z "${CURRENT_VMIDS}" ]; then
+    echo "  WARNING: could not read nightly-backup job's vmid list, skipping re-add"
+elif echo ",${CURRENT_VMIDS}," | grep -q ",${TEMPLATE_ID},"; then
+    echo "  VMID ${TEMPLATE_ID} already in nightly-backup job"
+else
+    pvesh set /cluster/backup/nightly-backup --vmid "${CURRENT_VMIDS},${TEMPLATE_ID}"
+    echo "  Added VMID ${TEMPLATE_ID} back to nightly-backup job"
+fi
+
 echo ""
 echo "=== arm64 template $TEMPLATE_ID ($TEMPLATE_NAME) created ==="
 echo "    Base OS:      Debian ${DEBIAN_CODENAME} arm64 (vanilla cloud image)"
