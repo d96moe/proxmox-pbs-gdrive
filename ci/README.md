@@ -207,6 +207,8 @@ Neither template has PBS pre-installed — `restore-1-install.sh` installs it as
 
 Downloads a Debian Bookworm x86_64 cloud image, creates a VM with a 16 GB OS disk and a 4 GB PBS data disk, installs Proxmox VE via SSH, then converts to template.
 
+The OS disk is `scsi0` and the PBS data disk is `scsi1`. Never address them as `/dev/sda` / `/dev/sdb`: the kernel doesn't guarantee sdX order between the two, and on 2026-11-01 `scsi1` came up as `sda`. That broke the template refresh (grub-pc was preseeded to install onto the empty data disk) and the backup pipeline (it tried to format the OS disk). The template script, `config_ci.env` and the pipelines' *Prepare disk* stage resolve them through `/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0` / `...-drive-scsi1` instead. The arm64 config already detects the data disk dynamically.
+
 **Template 9002 (arm64):** Run once on the x86_64 PVE host:
 
 ```bash

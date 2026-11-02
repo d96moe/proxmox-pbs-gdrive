@@ -80,14 +80,19 @@ ENDSSH
 
         stage('Prepare disk') {
             steps {
-                echo "Formatting /dev/sdb (PBS partition) with ext4..."
+                echo "Formatting the PBS data disk (scsi1) with ext4..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -e
+# scsi1 by its stable name — sdX order between scsi0/scsi1 isn't guaranteed
+PBS_DISK=\$(readlink -f /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1)
+[ -b "\$PBS_DISK" ] || { echo "ERROR: scsi1 data disk not found"; ls -l /dev/disk/by-id/; exit 1; }
+echo "PBS data disk is \$PBS_DISK"
 systemctl stop mnt-pbs.mount 2>/dev/null || true
 umount -f /mnt/pbs 2>/dev/null || true
-umount -f /dev/sdb 2>/dev/null || true
+umount -f "\$PBS_DISK" 2>/dev/null || true
 sleep 1
-mkfs.ext4 -F -F -m 0 /dev/sdb
+mkfs.ext4 -F -F -m 0 "\$PBS_DISK"
 ENDSSH
                 """
             }

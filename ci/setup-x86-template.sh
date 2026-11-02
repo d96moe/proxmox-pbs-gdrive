@@ -249,7 +249,17 @@ DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -qq -y
 # never recorded. DEBIAN_FRONTEND=noninteractive doesn't supply a default
 # here, it just fails outright ("You must correct your GRUB install
 # devices before proceeding"). Preseed it to the actual OS disk.
-echo "grub-pc grub-pc/install_devices multiselect /dev/sda" | debconf-set-selections
+#
+# Use the stable by-id name of scsi0, not /dev/sda: the kernel doesn't
+# guarantee sdX order between the two virtio-scsi disks. On 2026-11-01 the
+# empty data disk (scsi1) came up as sda, grub-install found no filesystem
+# there and the whole proxmox-ve install failed.
+OS_DISK=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0
+if [ ! -e "${OS_DISK}" ]; then
+    echo "ERROR: ${OS_DISK} not found — disk layout changed?"; ls -l /dev/disk/by-id/; exit 1
+fi
+echo "  OS disk (scsi0) is $(readlink -f "${OS_DISK}")"
+echo "grub-pc grub-pc/install_devices multiselect ${OS_DISK}" | debconf-set-selections
 echo "grub-pc grub-pc/install_devices_empty boolean false" | debconf-set-selections
 
 # Second guard, cheap insurance: dist-upgrade above can itself trigger
@@ -325,6 +335,7 @@ echo "    Base OS:      Debian ${DEBIAN_CODENAME} x86_64 (cloud image)"
 echo "    PVE:          installed (pve-no-subscription repo)"
 echo "    PBS:          NOT pre-installed (tested by restore-1-install.sh in CI)"
 echo "    IP:           ${VM_IP}"
-echo "    OS disk:      /dev/sda (16 GB)"
-echo "    Data disk:    /dev/sdb (4 GB, formatted fresh each CI run by pipeline)"
+echo "    OS disk:      scsi0 (16 GB)"
+echo "    Data disk:    scsi1 (4 GB, formatted fresh each CI run by pipeline)"
+echo "    (sdX names are not stable — address disks via /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsiN)"
 echo "    Used by:      proxmox-ci-backup and proxmox-ci-dr"
