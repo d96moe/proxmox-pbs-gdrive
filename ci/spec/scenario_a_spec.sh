@@ -47,7 +47,10 @@ count_gdrive_config_tarballs() {
 Describe 'Tool installation'
     It 'installs proxmox-backup-server'
         When run dpkg-query -W -f='${Status}' proxmox-backup-server
-        The output should include 'install ok installed'
+        # "ok installed" matches both "install ok installed" and "hold ok installed"
+        # (the arm64 PBS fallback apt-mark holds the package); still rejects
+        # half-installed / config-files states.
+        The output should include 'ok installed'
     End
 
     It 'installs restic'
