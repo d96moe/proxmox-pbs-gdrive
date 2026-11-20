@@ -129,6 +129,34 @@ ROOT_PARTUUID=$(awk '$2=="/"{sub(/^PARTUUID=/,"",$1); print $1}' "${R}/etc/fstab
 PIOS_VERSION="$(. "${R}/etc/os-release"; echo "${PRETTY_NAME}") / $(head -1 "${R}/etc/rpi-issue" 2>/dev/null)"
 echo "Pi OS: ${PIOS_VERSION}, root PARTUUID=${ROOT_PARTUUID}"
 
+# Bring the image up to date ONCE here (weekly), instead of in every nightly CI
+# run: the Pi kernels' upgrade + initramfs regeneration is slow under full
+# arm64 emulation and has nothing DR-specific about it. restore-1-install.sh
+# still runs its own dist-upgrade in CI (only the delta since this build).
+# Done in an arm64 chroot via qemu-user (binfmt) — the image is never booted,
+# so it stays pristine (no machine-id, no SSH host keys, no cloud-init state).
+# PVE/ZFS are deliberately NOT installed here: installing them is the test.
+echo "--- dist-upgrade in arm64 chroot (qemu-user) ---"
+for d in proc sys dev dev/pts; do mount --bind "/${d}" "${R}/${d}"; MOUNTS+=("${R}/${d}"); done
+# DNS for apt inside the chroot; the image's own resolv.conf (file or symlink) is restored after
+mv "${R}/etc/resolv.conf" "${R}/etc/resolv.conf.pios-orig" 2>/dev/null || true
+cp /etc/resolv.conf "${R}/etc/resolv.conf"
+printf '#!/bin/sh\nexit 101\n' > "${R}/usr/sbin/policy-rc.d"   # no service starts in the chroot
+chmod +x "${R}/usr/sbin/policy-rc.d"
+chroot "${R}" /usr/bin/env DEBIAN_FRONTEND=noninteractive bash -c '
+    set -euo pipefail
+    apt-get update -qq
+    apt-get -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade
+    apt-get -y -qq autoremove --purge
+    apt-get clean
+'
+rm -f "${R}/usr/sbin/policy-rc.d" "${R}/etc/resolv.conf"
+mv "${R}/etc/resolv.conf.pios-orig" "${R}/etc/resolv.conf" 2>/dev/null || true
+for d in dev/pts dev sys proc; do umount "${R}/${d}"; done
+MOUNTS=("${WORK}/deb" "${WORK}/root" "${WORK}/root/boot/firmware")
+PI_KERNELS="$(ls "${R}/usr/lib/modules" | grep rpt | tr '\n' ' ')"
+echo "Pi kernels after upgrade: ${PI_KERNELS}"
+
 # Kernel modules for the swapped-in kernel (Pi OS is usrmerged: /lib -> usr/lib)
 cp -a "${WORK}/deb/usr/lib/modules/${KVER}" "${R}/usr/lib/modules/"
 
@@ -226,6 +254,7 @@ cat > "${OUT_DIR}/pios-ci.env" << EOF
 PIOS_IMAGE="$(basename "${PIOS_IMG}")"
 PIOS_VERSION="${PIOS_VERSION}"
 BOOT_KERNEL="${KVER}"
+PI_KERNELS="${PI_KERNELS}"
 EOF
 echo "Artifact: ${OUT_DIR}/pios-ci.qcow2 ($(du -h "${OUT_DIR}/pios-ci.qcow2" | cut -f1))"
 cat "${OUT_DIR}/pios-ci.env"
