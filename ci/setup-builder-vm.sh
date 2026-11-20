@@ -58,7 +58,7 @@ qm create "${VM_ID}" \
     --name "${VM_NAME}" \
     --description "Persistent CI builder: all disk-image work happens here, never on the PVE host. Rebuild: ci/setup-builder-vm.sh + ci/provision-builder.sh" \
     --cpu host \
-    --cores 4 \
+    --cores 8 \
     --memory 4096 \
     --balloon 1024 \
     --net0 virtio,bridge=vmbr0 \

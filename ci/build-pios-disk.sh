@@ -41,12 +41,30 @@ WORK="$(mktemp -d /srv/ci-build/pios.XXXXXX)"
 LOOPS=()
 MOUNTS=()
 cleanup() {
-    local l
-    for ((i=${#MOUNTS[@]}-1; i>=0; i--)); do umount "${MOUNTS[$i]}" 2>/dev/null || true; done
+    local l m p
+    # Kill anything still running inside the chroot first (apt/dpkg start their
+    # own process groups, so a TERM to ours does not reach them, and they would
+    # keep the loop device busy after a lazy unmount).
+    for p in /proc/[0-9]*; do
+        [ "$(readlink "$p/root" 2>/dev/null)" = "${WORK}/root" ] && kill -KILL "${p#/proc/}" 2>/dev/null
+    done
+    sleep 1
+    # Unmount EVERYTHING under WORK recursively (incl. the chroot's bind mounts of
+    # /proc /sys /dev), deepest first — not just what MOUNTS tracked.
+    for m in $(findmnt -rno TARGET | grep "^${WORK}" | sort -r); do
+        umount -R "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
+    done
     for l in "${LOOPS[@]}"; do losetup -d "$l" 2>/dev/null || true; done
-    rm -rf "${WORK}"
+    # --one-file-system: never descend into a mount that survived (a leftover
+    # bind mount of the host's /dev would otherwise get its device nodes deleted).
+    rm -rf --one-file-system "${WORK}"
 }
 trap cleanup EXIT
+# bash does not run the EXIT trap when killed by a signal unless the signal is
+# trapped — an aborted Jenkins build (SIGTERM/HUP) must still clean up.
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 
 mnt() {  # mnt <dev> <dir> [opts]
     mkdir -p "$2"
@@ -73,13 +91,25 @@ find "${CACHE}" -maxdepth 1 -name '*-raspios-*-arm64-lite.img*' \
 # =============================================================================
 echo "=== Step 2: Debian ${DEBIAN_CODENAME} arm64 cloud kernel + initrd + modules ==="
 # =============================================================================
-DEB_IMAGE_FILENAME=$(curl -fsSL "https://cloud.debian.org/images/cloud/${DEBIAN_CODENAME}/daily/latest/" \
-    | grep -oE 'debian-[0-9]+-genericcloud-arm64-daily\.qcow2' | sort -u | awk 'NR==1')
-[ -z "${DEB_IMAGE_FILENAME}" ] && { echo "ERROR: no genericcloud-arm64-daily image found"; exit 1; }
+DEB_BASE="https://cloud.debian.org/images/cloud/${DEBIAN_CODENAME}/daily/latest"
+DEB_IMAGE_FILENAME="debian-13-genericcloud-arm64-daily.qcow2"
 DEB_QCOW="${CACHE}/${DEB_IMAGE_FILENAME}"
-# "daily/latest" — always refresh so the kernel tracks Debian's current one
-curl -fsSL --retry 3 -o "${DEB_QCOW}" \
-    "https://cloud.debian.org/images/cloud/${DEBIAN_CODENAME}/daily/latest/${DEB_IMAGE_FILENAME}"
+# "daily/latest" — refresh every build so the kernel tracks Debian's current one.
+# Download to a temp file, verify against Debian's SHA512SUMS, and only then
+# replace the cache: a failed or interrupted download must never clobber a good
+# cached copy. If Debian is down (it does return 5xx), fall back to the cache
+# as long as that still verifies as an intact qcow2.
+CURL_RETRY=(--retry 5 --retry-delay 15 --retry-all-errors)
+if curl -fsSL "${CURL_RETRY[@]}" -o "${WORK}/SHA512SUMS" "${DEB_BASE}/SHA512SUMS" \
+   && curl -fsSL "${CURL_RETRY[@]}" -o "${WORK}/${DEB_IMAGE_FILENAME}" "${DEB_BASE}/${DEB_IMAGE_FILENAME}" \
+   && (cd "${WORK}" && grep " ${DEB_IMAGE_FILENAME}\$" SHA512SUMS | sha512sum -c --quiet -); then
+    mv "${WORK}/${DEB_IMAGE_FILENAME}" "${DEB_QCOW}"
+    echo "Debian cloud image refreshed + verified"
+elif [ -f "${DEB_QCOW}" ] && qemu-img check -q "${DEB_QCOW}"; then
+    echo "WARNING: could not refresh/verify the Debian cloud image — using the cached copy ($(date -r "${DEB_QCOW}" +%F))"
+else
+    echo "ERROR: no usable Debian cloud image (download failed and no intact cache)"; exit 1
+fi
 qemu-img convert -O raw "${DEB_QCOW}" "${WORK}/debian.raw"
 DLOOP=$(losetup -fPr --show "${WORK}/debian.raw"); LOOPS+=("${DLOOP}")
 DROOT=""
@@ -143,10 +173,40 @@ mv "${R}/etc/resolv.conf" "${R}/etc/resolv.conf.pios-orig" 2>/dev/null || true
 cp /etc/resolv.conf "${R}/etc/resolv.conf"
 printf '#!/bin/sh\nexit 101\n' > "${R}/usr/sbin/policy-rc.d"   # no service starts in the chroot
 chmod +x "${R}/usr/sbin/policy-rc.d"
+# ZFS via DKMS is pre-built here too: installing proxmox-ve on current Pi OS pulls
+# the Pi repo's zfsutils-linux + zfs-dkms, and compiling ZFS per Pi kernel under
+# full system emulation dominated the nightly DR runs. Under qemu-user it is far
+# faster, and it is still tested every week: the build FAILS if DKMS cannot build
+# ZFS for every installed Pi kernel — the early warning for a new Pi kernel that
+# zfs-dkms does not support yet (no pinning: follow latest, let CI catch breakage).
+# proxmox-ve itself is NOT installed — that remains the DR test.
 chroot "${R}" /usr/bin/env DEBIAN_FRONTEND=noninteractive bash -c '
     set -euo pipefail
     apt-get update -qq
     apt-get -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade
+    # Keep only the newest Pi kernel per flavour: DKMS builds ZFS for EVERY
+    # installed kernel, and the pre-upgrade ones are dead weight (2 builds, not 4).
+    for flavour in rpi-v8 rpi-2712; do
+        newest=$(ls /usr/lib/modules | grep -E "rpt-${flavour}\$" | sort -V | tail -1)
+        for k in $(ls /usr/lib/modules | grep -E "rpt-${flavour}\$"); do
+            [ "$k" = "$newest" ] && continue
+            echo "purging old kernel $k"
+            apt-get -y -qq purge "linux-image-$k" "linux-headers-$k" || true
+        done
+    done
+    apt-get -y -qq autoremove --purge
+    echo "zfs-dkms build start: $(date +%T)"
+    apt-get -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install zfs-dkms zfsutils-linux
+    echo "zfs-dkms build end:   $(date +%T)"
+    for k in $(ls /usr/lib/modules | grep rpt); do
+        [ -d "/usr/lib/modules/$k/build" ] || continue   # only kernels with headers
+        dkms autoinstall -k "$k" >/dev/null
+    done
+    echo "dkms status:"; dkms status
+    for k in $(ls /usr/lib/modules | grep rpt); do
+        [ -d "/usr/lib/modules/$k/build" ] || continue
+        dkms status -k "$k" zfs | grep -q installed || { echo "ERROR: zfs DKMS not built for $k"; exit 1; }
+    done
     apt-get -y -qq autoremove --purge
     apt-get clean
 '

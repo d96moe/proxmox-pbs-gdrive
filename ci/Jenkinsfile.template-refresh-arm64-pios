@@ -25,7 +25,10 @@ pipeline {
     options {
         disableConcurrentBuilds()
         timestamps()
-        timeout(time: 75, unit: 'MINUTES')
+        // Disk build includes compiling ZFS via DKMS for each Pi kernel under
+        // qemu-user (~22 min per kernel on 4 cores, 2026-11-20) — TODO: cache
+        // the built module (dkms mktarball/ldtarball) keyed by zfs+kernel version.
+        timeout(time: 150, unit: 'MINUTES')
     }
 
     triggers {
