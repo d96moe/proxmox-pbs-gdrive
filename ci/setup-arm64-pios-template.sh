@@ -121,7 +121,8 @@ fi
 echo "=== Step 3: Standalone GRUB arm64-efi binary (modules from the Debian .deb, not installed) ==="
 # =============================================================================
 GRUB_DEB_PATH=$(curl -fsSL "https://deb.debian.org/debian/dists/${DEBIAN_CODENAME}/main/binary-arm64/Packages.xz" \
-    | xz -dc | awk '/^Package: grub-efi-arm64-bin$/{f=1} f&&/^Filename:/{print $2; exit}')
+    | xz -dc | awk '/^Package: grub-efi-arm64-bin$/{f=1} f&&!d&&/^Filename:/{print $2; d=1}')
+# (awk must read to EOF: an early `exit` SIGPIPEs xz -> exit 141 under pipefail)
 [ -z "${GRUB_DEB_PATH}" ] && { echo "ERROR: grub-efi-arm64-bin not found in Debian index"; exit 1; }
 curl -fsSL --retry 3 -o "${WORK}/grub.deb" "https://deb.debian.org/debian/${GRUB_DEB_PATH}"
 dpkg-deb -x "${WORK}/grub.deb" "${WORK}/grubpkg"
