@@ -80,7 +80,12 @@ PVE is **installed by the script** during the CI run (`restore-1-install.sh` Ste
 
 Full QEMU emulation means arm64 pipelines run **3–5× slower** than x86_64.
 
-Since every arm64 run installs the *latest* pxvirt and pipbs packages, these jobs are also the early warning for drift between the two community repos. Example: on 2026-11-19, pipbs PBS 4.2.11-1 could only be installed by removing `proxmox-ve`, so `pve-apt-hook` aborted the "Install tools" stage. `restore-1-install.sh` now dry-runs the PBS install and falls back to the newest pipbs version that keeps PVE. If the log shows that fallback, check upstream before you upgrade the real Pi.
+Since every arm64 run installs the *latest* pxvirt and pipbs packages, these jobs are also the early warning for drift between the two community repos. Example: on 2026-11-19, pipbs PBS 4.2.11-1 could only be installed by removing `proxmox-ve`, so `pve-apt-hook` aborted the "Install tools" stage. `restore-1-install.sh` now dry-runs the PBS install. If no pipbs version keeps PVE, it installs the self-hosted fallback debs (see the main README).
+
+The "Install tools" stage then reads `/root/.pbs-arm64-fallback` on the CI VM:
+- **No marker:** green.
+- **Marker present:** **UNSTABLE**.
+- **Marker present for more than 30 days** (since `PBS_ARM64_FALLBACK_SINCE`): **FAILURE**. Then check pxvirt and pipbs, and either bump the fallback or drop it.
 
 | Node | Role | Access method |
 |---|---|---|

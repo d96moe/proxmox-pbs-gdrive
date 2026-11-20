@@ -138,7 +138,17 @@ backup-pve-config.sh (nightly at 04:00)
 > ```
 > If only one repo has a new version, wait for the other to catch up.
 >
-> A matching API version is not enough on its own: a new pipbs release can still pull dependencies that conflict with the installed pxvirt PVE, so apt "solves" it by **removing `proxmox-ve`/`pve-manager`**. `pve-apt-hook` blocks that, and the install fails. So before installing PBS, `restore-1-install.sh` dry-runs `apt-get -s install proxmox-backup-server`. If that would remove a PVE package, or doesn't resolve, the script falls back to the newest pipbs version that installs cleanly, and fails only if none does. On an existing ARM64 host, run the same dry-run before upgrading PBS:
+> A matching API version is not enough on its own: a new pipbs release can still pull dependencies that conflict with the installed pxvirt PVE, so apt "solves" it by **removing `proxmox-ve`/`pve-manager`**. `pve-apt-hook` blocks that, and the install fails. So before installing PBS, `restore-1-install.sh` dry-runs `apt-get -s install proxmox-backup-server`. If that would remove a PVE package, or doesn't resolve, the script tries these in order:
+> 1. the newest older pipbs version still in its index (pipbs usually keeps only the latest);
+> 2. **self-hosted fallback debs**: a known-good PBS version kept as a [GitHub release](https://github.com/d96moe/proxmox-pbs-gdrive/releases/tag/pbs-arm64-4.2.1-1) of this repo, with sha256 checksums pinned in the script (`PBS_ARM64_FALLBACK_*`). The fallback is installed and then held with `apt-mark hold`.
+>
+> Every install tries the latest pipbs first, so it switches back automatically once pxvirt catches up. A *real* restore never fails because the fallback is old. In CI, an arm64 build that used the fallback is marked **UNSTABLE**, and it **fails** once the fallback has been in use for more than 30 days (`PBS_ARM64_FALLBACK_SINCE`). That way it can't be forgotten.
+>
+> Why a self-hosted copy: pipbs deletes old versions, and the only other copy of a working version is the Pi's own apt cache. That copy disappears in exactly the disaster these scripts are for.
+>
+> Example: in 2026-11, pipbs 4.2.11-1 declared `Breaks: proxmox-mail-forward (<< 1.1.0)`, but pxvirt only ships 1.0.2, which `pve-manager` depends on. The fallback is 4.2.1-1, the version the cabin Pi runs. After pxvirt catches up, run `apt-mark unhold proxmox-backup-server proxmox-backup-docs` on a host that got the fallback.
+>
+> On an existing ARM64 host, run the same dry-run before upgrading PBS:
 > ```bash
 > apt-get -s install proxmox-backup-server | grep '^Remv'   # must print nothing
 > ```

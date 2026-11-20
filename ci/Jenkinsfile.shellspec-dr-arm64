@@ -177,6 +177,25 @@ cd ${SCRIPTS_DIR}
 CI=true bash restore-1-install.sh
 ENDSSH
                 """
+                script {
+                    // restore-1-install.sh leaves a marker when it had to use the
+                    // self-hosted PBS fallback (pipbs can't co-install with pxvirt's PVE).
+                    // rc 3 = fallback in use (UNSTABLE), rc 1 = in use >30 days (FAIL).
+                    def rc = sh(returnStatus: true, script: '''
+                        FB=$(ssh $SSH_OPTS root@$VM_IP 'cat /root/.pbs-arm64-fallback 2>/dev/null' || true)
+                        [ -z "$FB" ] && { echo "PBS installed from pipbs (no fallback)"; exit 0; }
+                        SINCE=$(echo "$FB" | sed -n 's/^since=//p')
+                        AGE=$(( ( $(date +%s) - $(date -d "$SINCE" +%s) ) / 86400 ))
+                        echo "PBS ARM64 FALLBACK in use: $(echo "$FB" | tr '\\n' ' ')(${AGE} days)"
+                        [ "$AGE" -gt 30 ] && { echo "Fallback active >30 days — check pxvirt/pipbs, bump or drop the fallback"; exit 1; }
+                        exit 3
+                    ''')
+                    if (rc == 3) {
+                        unstable('PBS installed from self-hosted arm64 fallback — pipbs latest cannot co-install with pxvirt PVE')
+                    } else if (rc != 0) {
+                        error('PBS arm64 fallback has been in use for more than 30 days')
+                    }
+                }
             }
         }
 

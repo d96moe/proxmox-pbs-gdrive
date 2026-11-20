@@ -572,19 +572,50 @@ if [ "${ARCH}" = "aarch64" ] && [ -z "${PBS_INSTALL_VERSION}" ]; then
 fi
 
 # ARM64 only: the API check above says nothing about whether apt can co-install
-# pipbs's PBS next to pxvirt's PVE. 2026-11-19: pipbs 4.2.11-1 resolved only by
-# REMOVING proxmox-ve + pve-manager (pve-apt-hook then aborts the install), while
-# 4.2.9-1 had installed fine. Dry-run the install and, if it would remove any PVE
-# package, fall back to the newest pipbs version whose install removes nothing PVE.
+# pipbs's PBS next to pxvirt's PVE. 2026-11-19: pipbs 4.2.11-1 declares
+# "Breaks: proxmox-mail-forward (<< 1.1.0)" but pxvirt only ships 1.0.2 (which
+# pve-manager depends on), so apt resolves it only by REMOVING proxmox-ve +
+# pve-manager and pve-apt-hook aborts. pipbs keeps no old versions in its index.
+# Order of attempts:
+#   1. latest (or API-pinned) pipbs version
+#   2. any older pipbs version still in the index
+#   3. self-hosted known-good debs (PBS_ARM64_FALLBACK_*): the exact PBS version
+#      the cabin Pi 5 runs, kept as a GitHub release so a full disaster rebuild
+#      works even when pipbs and pxvirt are out of step.
+# Every attempt is dry-run first; the fallback is only used while 1+2 fail, so
+# installs go back to the latest pipbs automatically once pxvirt catches up.
+PBS_ARM64_FALLBACK_VERSION="4.2.1-1"
+PBS_ARM64_FALLBACK_SINCE="2026-11-20"   # CI goes red if the fallback is used >30 days past this
+PBS_ARM64_FALLBACK_URL="https://github.com/d96moe/proxmox-pbs-gdrive/releases/download/pbs-arm64-${PBS_ARM64_FALLBACK_VERSION}"
+PBS_ARM64_FALLBACK_DEBS="
+2a277745cf8677b6b021a5d9da38d2bc6b9964e97bf1b5e7f8afbe68c1e6817c  proxmox-backup-server_4.2.1-1_arm64.deb
+3f9338dce4e2071e42bb7c51407c864d9dcb5aaa4f52c6e7b1c97e5fc78a3ba1  proxmox-backup-docs_4.2.1-1_all.deb
+"
+PBS_ARM64_FALLBACK_MARKER="/root/.pbs-arm64-fallback"
+
 _pbs_install_ok() {
-    # $1 = apt package spec (proxmox-backup-server or proxmox-backup-server=<ver>)
+    # $@ = apt install args (package spec(s) and/or ./local.deb paths)
     # OK = dry-run resolves (exit 0 — an unresolvable older pin prints no Remv
     # lines, so exit status matters too) AND removes no PVE package.
     local sim
-    sim="$(apt-get -s install "$1" 2>/dev/null)" || return 1
+    sim="$(apt-get -s install "$@" 2>/dev/null)" || return 1
     ! printf '%s\n' "${sim}" \
         | grep -qE '^Remv (proxmox-ve|pve-manager|qemu-server|pve-container|pve-cluster) '
 }
+
+# Download + sha256-verify the self-hosted fallback debs into $1. Returns 1 on any failure.
+_pbs_fetch_fallback_debs() {
+    local dir="$1" sum file
+    mkdir -p "${dir}"
+    while read -r sum file; do
+        [ -z "${file}" ] && continue
+        curl -fsSL --retry 3 -o "${dir}/${file}" "${PBS_ARM64_FALLBACK_URL}/${file}" || return 1
+        echo "${sum}  ${dir}/${file}" | sha256sum -c --quiet - || return 1
+    done <<< "${PBS_ARM64_FALLBACK_DEBS}"
+}
+
+PBS_INSTALL_DEBS=()
+rm -f "${PBS_ARM64_FALLBACK_MARKER}"
 if [ "${ARCH}" = "aarch64" ]; then
     _spec="proxmox-backup-server${PBS_INSTALL_VERSION:+=${PBS_INSTALL_VERSION}}"
     if ! _pbs_install_ok "${_spec}"; then
@@ -599,19 +630,39 @@ if [ "${ARCH}" = "aarch64" ]; then
             echo "    ${_v}: would also remove PVE packages (or does not resolve)"
         done < <(apt-cache madison proxmox-backup-server 2>/dev/null \
             | awk -F'|' '{gsub(/ /,"",$2); print $2}' | sort -rV)
-        if [ -z "${_found}" ]; then
-            echo "ERROR: no pipbs proxmox-backup-server version installs without removing proxmox-ve."
-            echo "  pxvirt and pipbs are out of step — check both repos before retrying:"
-            echo "    pxvirt: https://us.mirrors.lierfang.com/pxcloud/pxvirt"
-            echo "    pipbs:  https://github.com/dexogen/pipbs"
-            exit 1
+        if [ -n "${_found}" ]; then
+            echo "  Using pipbs proxmox-backup-server=${_found} (installs alongside current PVE)"
+            PBS_INSTALL_VERSION="${_found}"
+        else
+            echo "  No pipbs version installs alongside current PVE — trying self-hosted fallback ${PBS_ARM64_FALLBACK_VERSION}..."
+            _fb_dir="/root/pbs-arm64-fallback-${PBS_ARM64_FALLBACK_VERSION}"
+            if _pbs_fetch_fallback_debs "${_fb_dir}"; then
+                while read -r _sum _file; do
+                    [ -n "${_file}" ] && PBS_INSTALL_DEBS+=("${_fb_dir}/${_file}")
+                done <<< "${PBS_ARM64_FALLBACK_DEBS}"
+            fi
+            if [ "${#PBS_INSTALL_DEBS[@]}" -eq 0 ] || ! _pbs_install_ok "${PBS_INSTALL_DEBS[@]}"; then
+                echo "ERROR: neither pipbs nor the self-hosted fallback (${PBS_ARM64_FALLBACK_URL})"
+                echo "  installs proxmox-backup-server without removing proxmox-ve."
+                echo "  pxvirt and pipbs are out of step — check both repos before retrying:"
+                echo "    pxvirt: https://us.mirrors.lierfang.com/pxcloud/pxvirt"
+                echo "    pipbs:  https://github.com/dexogen/pipbs"
+                exit 1
+            fi
+            echo "  !! PBS_ARM64_FALLBACK: installing self-hosted proxmox-backup-server ${PBS_ARM64_FALLBACK_VERSION}"
+            echo "  !! (latest pipbs can't co-install with pxvirt's PVE). It will be held (apt-mark hold)"
+            echo "  !! so a later dist-upgrade can't try to replace it; unhold once pxvirt catches up:"
+            echo "  !!   apt-mark unhold proxmox-backup-server proxmox-backup-docs"
+            printf 'version=%s\nsince=%s\n' "${PBS_ARM64_FALLBACK_VERSION}" "${PBS_ARM64_FALLBACK_SINCE}" \
+                > "${PBS_ARM64_FALLBACK_MARKER}"
         fi
-        echo "  Using pipbs proxmox-backup-server=${_found} (installs alongside current PVE)"
-        PBS_INSTALL_VERSION="${_found}"
     fi
 fi
 
-if [ -n "${PBS_INSTALL_VERSION}" ]; then
+if [ "${#PBS_INSTALL_DEBS[@]}" -gt 0 ]; then
+    apt_get install -y "${PBS_INSTALL_DEBS[@]}"
+    apt-mark hold proxmox-backup-server proxmox-backup-docs
+elif [ -n "${PBS_INSTALL_VERSION}" ]; then
     apt_get install -y "proxmox-backup-server=${PBS_INSTALL_VERSION}"
 else
     apt_get install -y proxmox-backup-server
