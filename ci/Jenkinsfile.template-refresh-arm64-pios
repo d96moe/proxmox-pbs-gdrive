@@ -2,14 +2,19 @@
 // Jenkinsfile.template-refresh-arm64-pios — Weekly rebuild of the Pi OS arm64
 // CI template (VM 9003)
 //
-// 1. ci/setup-arm64-pios-template.sh builds VM 9003 on the PVE host from the
-//    LATEST Raspberry Pi OS Lite arm64 image (unmodified userland; only the
-//    boot layer is swapped so it can boot on QEMU `virt`).
-// 2. Smoke test: a throwaway full clone (VM 9198) is booted and checked over
-//    SSH — Pi OS userland, swapped kernel running, Pi apt sources present,
-//    cloud-init done, network + DNS up, /boot/firmware mounted.
-// 3. Only if the smoke test passes is VM 9003 converted into a template, so a
-//    broken image never becomes the template the arm64 CI jobs clone.
+// Roles (see ci/README.md "Where things run"):
+//   * CI builder VM  — builds the disk image (ci/build-pios-disk.sh): download,
+//                      loop-mount, swap the boot layer, write the NoCloud seed.
+//   * PVE host       — qm operations only (ci/setup-arm64-pios-template.sh):
+//                      import the finished disk as VM 9003, clone, template.
+//   * this Jenkins   — orchestration only; streams the artifact builder -> PVE.
+//
+// 1. Build the disk on the builder.
+// 2. Import it on the PVE host as VM 9003 (not yet a template).
+// 3. Smoke test: boot a throwaway full clone (VM 9198) and check it over SSH —
+//    Pi OS userland, swapped kernel running, Pi apt sources present, cloud-init
+//    done, network + DNS up, /boot/firmware mounted.
+// 4. Only if the smoke test passes: `qm template 9003`.
 //
 // Shares the ci-vm-arm64 lock (and IP 192.168.0.252) with the other arm64 jobs.
 // =============================================================================
@@ -20,7 +25,7 @@ pipeline {
     options {
         disableConcurrentBuilds()
         timestamps()
-        timeout(time: 60, unit: 'MINUTES')
+        timeout(time: 75, unit: 'MINUTES')
     }
 
     triggers {
@@ -28,21 +33,35 @@ pipeline {
     }
 
     environment {
-        PVE_HOST  = "192.168.0.200"
-        VM_IP     = "192.168.0.252"
-        SMOKE_ID  = "9198"
-        SSH_OPTS  = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
+        PVE_HOST     = "192.168.0.200"
+        BUILDER      = "192.168.0.248"
+        VM_IP        = "192.168.0.252"
+        SMOKE_ID     = "9198"
+        INCOMING     = "/var/lib/vz/images/pios-ci-incoming.qcow2"
+        SSH_OPTS     = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
     }
 
     stages {
+        stage('Build disk on builder') {
+            steps {
+                sh '''
+                    PUBKEY="$(cat /var/lib/jenkins/.ssh/id_ed25519.pub)"
+                    ssh $SSH_OPTS root@$BUILDER "JENKINS_PUBKEY='$PUBKEY' bash -s" < ci/build-pios-disk.sh
+                '''
+            }
+        }
+
         stage('Pi OS template (VM 9003)') {
             options { lock('ci-vm-arm64') }
             stages {
-                stage('Build VM 9003') {
+                stage('Import on PVE (qm only)') {
                     steps {
                         sh '''
-                            scp $SSH_OPTS ci/setup-arm64-pios-template.sh root@$PVE_HOST:/root/setup-arm64-pios-template.sh
-                            ssh $SSH_OPTS root@$PVE_HOST 'bash /root/setup-arm64-pios-template.sh'
+                            ssh $SSH_OPTS root@$BUILDER 'cat /srv/ci-build/out/pios-ci.qcow2' \
+                                | ssh $SSH_OPTS root@$PVE_HOST "cat > $INCOMING"
+                            eval "$(ssh $SSH_OPTS root@$BUILDER 'cat /srv/ci-build/out/pios-ci.env')"
+                            DESC="Pi OS CI template: $PIOS_VERSION ($PIOS_IMAGE), boot kernel $BOOT_KERNEL (Debian cloud, swapped boot layer)"
+                            ssh $SSH_OPTS root@$PVE_HOST "DISK_FILE=$INCOMING PIOS_DESC='$DESC' bash -s" < ci/setup-arm64-pios-template.sh
                         '''
                     }
                 }
@@ -94,7 +113,7 @@ ENDSSH
     post {
         always {
             sh '''
-                ssh $SSH_OPTS root@$PVE_HOST "qm stop $SMOKE_ID 2>/dev/null; qm destroy $SMOKE_ID --purge 1 2>/dev/null" || true
+                ssh $SSH_OPTS root@$PVE_HOST "qm stop $SMOKE_ID 2>/dev/null; qm destroy $SMOKE_ID --purge 1 2>/dev/null; rm -f $INCOMING" || true
             '''
         }
         success {

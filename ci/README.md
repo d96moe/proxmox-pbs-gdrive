@@ -194,6 +194,29 @@ For each pipeline, set the **Script Path** in the Jenkins job to the Jenkinsfile
 
 The two template-refresh jobs need no `ci/config_ci*.env` setup and don't clone a test VM — they SSH straight to the PVE host and rebuild templates 9001/9002 in place, so the only prerequisite is that the SSH key from Step 2/3 above is already working.
 
+### Where things run
+
+Each machine has one role. Keep it that way:
+
+| Machine | Role | Never |
+|---|---|---|
+| **Jenkins** | Orchestration only: runs the pipelines and streams artifacts between machines | Dev tooling or image work on the Jenkins host itself |
+| **CI builder VM** (VM 9020, `ci-builder`) | All disk-image work: downloading OS images, loop-mounting, swapping boot layers, writing seed files, arm64 `qemu-user` chroots | — (it is disposable, so any tool may be installed here) |
+| **PVE host** | `qm` operations only: import a finished disk, clone, start, stop, template, destroy. Test and debug VMs are fine | Loop-mounting or modifying images, running build scripts by hand, installing packages |
+
+The builder is **persistent and always on** (`onboot=1`), so using it is just an `ssh`. It is also **disposable**: nothing on it is precious, and it can be destroyed and recreated at any time:
+
+```bash
+# on the PVE host (qm only):
+FORCE=1 EXTRA_PUBKEYS="$(cat ~/.ssh/id_ed25519.pub)" bash ci/setup-builder-vm.sh
+# from any machine with SSH access to it:
+ssh root@<builder> bash -s < ci/provision-builder.sh
+```
+
+`provision-builder.sh` is idempotent: re-run it to bring the tool set up to date.
+
+Today only the Pi OS template (9003) is built on the builder. Templates 9001/9002 still download their cloud image onto the PVE host's ISO storage and are due to move to the builder too.
+
 ### VM Templates
 
 Both pipeline families clone a fresh VM from a template for each build and destroy it afterwards. Two templates are needed on the x86_64 PVE host:
@@ -230,12 +253,14 @@ This installs AAVMF arm64 UEFI firmware, downloads a vanilla Debian Trixie arm64
 
 *Why it exists.* The real Pi 5 runs Raspberry Pi OS, not plain Debian. Pi OS has its own apt repo (`archive.raspberrypi.com`), whose packages win over Debian's, and different defaults (cloud-init NoCloud seed in `/boot/firmware`, netplan + NetworkManager instead of ifupdown). Template 9002 tests none of that. A real disaster recovery starts from the *latest* Pi OS Lite image, so that is what 9003 is built from, every week.
 
-*What is swapped, and only that.* The Pi kernel has no virtio or generic PCI host support, so it cannot see a disk or NIC on QEMU `virt`. `ci/setup-arm64-pios-template.sh` keeps the Pi OS image as it is: userland, apt sources, partition layout and the Pi kernels themselves. It adds only these:
+*What is swapped, and only that.* The Pi kernel has no virtio or generic PCI host support, so it cannot see a disk or NIC on QEMU `virt`. `ci/build-pios-disk.sh` keeps the Pi OS image as it is: userland, apt sources, partition layout and the Pi kernels themselves. It adds only these:
 - Debian's arm64 **cloud** kernel, initrd and modules. This is the same kernel 9002 runs PVE/PBS/LXC on.
 - A standalone GRUB EFI binary on the FAT partition that boots that kernel.
 - The NoCloud seed files, written the way Raspberry Pi Imager writes them.
 
-The whole build runs on the PVE host with tools it already has. No arm64 code runs and nothing is installed on the host.
+The disk is built on the **CI builder VM** (see *Where things run*). The PVE host only imports the finished qcow2 (`ci/setup-arm64-pios-template.sh`, qm only).
+
+*Gotcha:* Pi OS renders netplan through **NetworkManager**, which does not support `match: driver:`. With a driver match, cloud-init's whole init-local stage crashes and neither the IP nor the SSH key is applied; the VM silently falls back to DHCP. The seed therefore names the NIC explicitly (`enp0s18`, which follows from the VM's PCI layout).
 
 In test-automation terms this is a virtual-ECU **L3** setup: production base software with only the hardware-specific boot layer abstracted. The boot chain (Pi firmware, Pi kernel, RP1 NIC, NVMe boot) is not covered and needs a manual test on real hardware.
 
