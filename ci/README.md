@@ -22,6 +22,7 @@ Jenkins pipelines automatically verify the scripts end-to-end on real Proxmox VM
 |---|---|---|---|---|
 | Template refresh (x86) | `proxmox-ci-template-refresh` | `ci/Jenkinsfile.template-refresh` | Sundays ~03:00 | Rebuilds CI template VM 9001 from a fresh Bookworm image |
 | Template refresh (ARM64) | `proxmox-ci-template-refresh-arm64` | `ci/Jenkinsfile.template-refresh-arm64` | Sundays ~04:00 | Rebuilds CI template VM 9002 from a fresh Trixie arm64 image |
+| Template refresh (ARM64, Pi OS) | `proxmox-ci-template-refresh-arm64-pios` | `ci/Jenkinsfile.template-refresh-arm64-pios` | Sundays ~05:00 | Rebuilds VM 9003 from the latest Raspberry Pi OS Lite arm64 (boot layer swapped), smoke-boots a clone, then templates it |
 | Scenario A | `proxmox-ci-backup` | `ci/Jenkinsfile.shellspec` | Nightly ~21:00 | Install + PBS backup + GDrive backup |
 | Scenario B (DR) | `proxmox-ci-dr` | `ci/Jenkinsfile.shellspec-dr` | Sundays ~21:00 | Full DR restore from GDrive |
 | Scenario A (ARM64) | `proxmox-ci-backup-arm64` | `ci/Jenkinsfile.shellspec-arm64` | Nightly ~22:00 | Same as A, emulated arm64 on x86_64 host |
@@ -200,7 +201,8 @@ Both pipeline families clone a fresh VM from a template for each build and destr
 | Template ID | Name | Used by | Base OS | PVE pre-installed | Script |
 |---|---|---|---|---|---|
 | 9001 | `restore-test-ci` | x86_64 pipelines | Debian Bookworm x86_64 | Yes | `ci/setup-x86-template.sh` |
-| 9002 | `arm64-restore-ci` | arm64 pipelines | Debian Trixie arm64 | No (installed by CI) | `ci/setup-arm64-template.sh` |
+| 9002 | `arm64-restore-ci` | arm64 pipelines (default) | Debian Trixie arm64 | No (installed by CI) | `ci/setup-arm64-template.sh` |
+| 9003 | `arm64-pios-restore-ci` | arm64 pipelines with `TEMPLATE_ID=9003` | **Latest Raspberry Pi OS Lite arm64** (boot layer swapped) | No (installed by CI) | `ci/setup-arm64-pios-template.sh` |
 
 **Why the difference?** x86_64 PVE installs cleanly from official repos so it's baked into the template. For arm64, installing pxvirt (the community ARM64 PVE port) is exactly what we want to test, so the template starts as plain Debian and `restore-1-install.sh` Step 0 installs pxvirt during the CI run.
 
@@ -223,6 +225,23 @@ The OS disk is `scsi0` and the PBS data disk is `scsi1`. Never address them as `
 ```
 
 This installs AAVMF arm64 UEFI firmware, downloads a vanilla Debian Trixie arm64 cloud image, creates a QEMU VM with `--arch aarch64` for full emulation, and converts it to a template. No Pi 5 or separate arm64 hardware required.
+
+**Template 9003 (arm64, Raspberry Pi OS):** built weekly by `proxmox-ci-template-refresh-arm64-pios` (`ci/Jenkinsfile.template-refresh-arm64-pios`, Sundays ~05:00, after 9002).
+
+*Why it exists.* The real Pi 5 runs Raspberry Pi OS, not plain Debian. Pi OS has its own apt repo (`archive.raspberrypi.com`), whose packages win over Debian's, and different defaults (cloud-init NoCloud seed in `/boot/firmware`, netplan + NetworkManager instead of ifupdown). Template 9002 tests none of that. A real disaster recovery starts from the *latest* Pi OS Lite image, so that is what 9003 is built from, every week.
+
+*What is swapped, and only that.* The Pi kernel has no virtio or generic PCI host support, so it cannot see a disk or NIC on QEMU `virt`. `ci/setup-arm64-pios-template.sh` keeps the Pi OS image as it is: userland, apt sources, partition layout and the Pi kernels themselves. It adds only these:
+- Debian's arm64 **cloud** kernel, initrd and modules. This is the same kernel 9002 runs PVE/PBS/LXC on.
+- A standalone GRUB EFI binary on the FAT partition that boots that kernel.
+- The NoCloud seed files, written the way Raspberry Pi Imager writes them.
+
+The whole build runs on the PVE host with tools it already has. No arm64 code runs and nothing is installed on the host.
+
+In test-automation terms this is a virtual-ECU **L3** setup: production base software with only the hardware-specific boot layer abstracted. The boot chain (Pi firmware, Pi kernel, RP1 NIC, NVMe boot) is not covered and needs a manual test on real hardware.
+
+*Smoke test before templating.* The job boots a throwaway clone (VM 9198) and checks that it reached a Pi OS userland, that the swapped kernel is running, the Pi apt source is present, cloud-init finished, network/DNS/apt work and `/boot/firmware` is mounted. Only then does it run `qm template 9003`, so a broken image never becomes the template.
+
+*Using it.* Both arm64 pipelines take a `TEMPLATE_ID` build parameter: `9002` (default, scheduled runs) or `9003`.
 
 ---
 

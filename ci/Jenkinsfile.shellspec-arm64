@@ -17,6 +17,13 @@ pipeline {
         timestamps()
     }
 
+    parameters {
+        // 9002 = Debian trixie arm64 cloud image (default, nightly runs).
+        // 9003 = latest Raspberry Pi OS Lite arm64, swapped boot layer only
+        //        (ci/setup-arm64-pios-template.sh) — the real Pi 5 base OS.
+        string(name: 'TEMPLATE_ID', defaultValue: '9002', description: 'arm64 template VM to clone (9002 Debian, 9003 Pi OS Lite)')
+    }
+
     triggers {
         cron('H 19 * * *')  // 19:xx UTC = 21:xx CEST — separate lock (ci-vm-arm64) from x86 jobs
     }
@@ -39,10 +46,10 @@ pipeline {
 
         stage('Clone VM') {
             steps {
-                echo "Cloning arm64 template 9002 -> VM ${VM_ID} (${env.BUILD_TAG})"
+                echo "Cloning arm64 template ${params.TEMPLATE_ID} -> VM ${VM_ID} (${env.BUILD_TAG})"
                 sh """
                     ssh ${SSH_OPTS} root@${PVE_HOST} \
-                        "qm clone 9002 ${VM_ID} --name restore-ci-arm64 --full 1"
+                        "qm clone ${params.TEMPLATE_ID} ${VM_ID} --name restore-ci-arm64 --full 1"
                     ssh ${SSH_OPTS} root@${PVE_HOST} \
                         "qm resize ${VM_ID} scsi0 32G"
                 """

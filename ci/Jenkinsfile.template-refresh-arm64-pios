@@ -1,0 +1,107 @@
+// =============================================================================
+// Jenkinsfile.template-refresh-arm64-pios — Weekly rebuild of the Pi OS arm64
+// CI template (VM 9003)
+//
+// 1. ci/setup-arm64-pios-template.sh builds VM 9003 on the PVE host from the
+//    LATEST Raspberry Pi OS Lite arm64 image (unmodified userland; only the
+//    boot layer is swapped so it can boot on QEMU `virt`).
+// 2. Smoke test: a throwaway full clone (VM 9198) is booted and checked over
+//    SSH — Pi OS userland, swapped kernel running, Pi apt sources present,
+//    cloud-init done, network + DNS up, /boot/firmware mounted.
+// 3. Only if the smoke test passes is VM 9003 converted into a template, so a
+//    broken image never becomes the template the arm64 CI jobs clone.
+//
+// Shares the ci-vm-arm64 lock (and IP 192.168.0.252) with the other arm64 jobs.
+// =============================================================================
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    triggers {
+        cron('H 5 * * 0')  // 5:xx UTC Sunday — after the Debian arm64 refresh (H4)
+    }
+
+    environment {
+        PVE_HOST  = "192.168.0.200"
+        VM_IP     = "192.168.0.252"
+        SMOKE_ID  = "9198"
+        SSH_OPTS  = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
+    }
+
+    stages {
+        stage('Pi OS template (VM 9003)') {
+            options { lock('ci-vm-arm64') }
+            stages {
+                stage('Build VM 9003') {
+                    steps {
+                        sh '''
+                            scp $SSH_OPTS ci/setup-arm64-pios-template.sh root@$PVE_HOST:/root/setup-arm64-pios-template.sh
+                            ssh $SSH_OPTS root@$PVE_HOST 'bash /root/setup-arm64-pios-template.sh'
+                        '''
+                    }
+                }
+
+                stage('Smoke-boot a clone') {
+                    steps {
+                        sh '''
+                            ssh $SSH_OPTS root@$PVE_HOST "qm stop $SMOKE_ID 2>/dev/null; qm destroy $SMOKE_ID --purge 1 2>/dev/null; qm clone 9003 $SMOKE_ID --name pios-smoke --full 1 && qm start $SMOKE_ID"
+                            echo "Waiting for SSH on $VM_IP (full arm64 emulation — first boot is slow)..."
+                            for i in $(seq 1 90); do
+                                ssh $SSH_OPTS root@$VM_IP true 2>/dev/null && { echo "SSH up after ~$((i*10))s"; break; }
+                                [ "$i" -eq 90 ] && { echo "ERROR: no SSH after 15 min"; exit 1; }
+                                sleep 10
+                            done
+                            ssh $SSH_OPTS root@$VM_IP bash -s << 'ENDSSH'
+set -euo pipefail
+fail() { echo "SMOKE FAIL: $*"; exit 1; }
+. /etc/os-release
+echo "OS:      $PRETTY_NAME / $(head -1 /etc/rpi-issue)"
+[ -f /etc/rpi-issue ] || fail "not a Raspberry Pi OS userland"
+KV_EXPECTED="$(cat /boot/firmware/ci-boot/KERNEL_VERSION)"
+echo "Kernel:  $(uname -r) (expected $KV_EXPECTED)"
+[ "$(uname -r)" = "$KV_EXPECTED" ] || fail "unexpected running kernel"
+grep -rqs archive.raspberrypi.com /etc/apt/sources.list /etc/apt/sources.list.d/ || fail "Pi apt source missing"
+findmnt /boot/firmware >/dev/null || fail "/boot/firmware not mounted"
+cloud-init status --wait >/dev/null || [ $? -eq 2 ] || fail "cloud-init failed: $(cloud-init status --long)"
+ip route show default | grep -q 'via 192.168.0.1' || fail "no default route"
+getent hosts deb.debian.org >/dev/null || fail "no DNS"
+apt-get -qq update || fail "apt update failed"
+echo "Network: $(ip -br addr | grep -v '^lo' | tr -s ' ')"
+echo "Failed units (informational): $(systemctl --failed --no-legend --plain | awk '{print $1}' | tr '\\n' ' ')"
+echo "SMOKE OK"
+ENDSSH
+                        '''
+                    }
+                }
+
+                stage('Convert to template') {
+                    steps {
+                        sh '''
+                            ssh $SSH_OPTS root@$PVE_HOST "qm stop $SMOKE_ID; qm destroy $SMOKE_ID --purge 1; qm template 9003"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+                ssh $SSH_OPTS root@$PVE_HOST "qm stop $SMOKE_ID 2>/dev/null; qm destroy $SMOKE_ID --purge 1 2>/dev/null" || true
+            '''
+        }
+        success {
+            echo "Pi OS arm64 template 9003 rebuilt and smoke-tested."
+        }
+        failure {
+            echo "Pi OS arm64 template refresh FAILED — VM 9003 was NOT converted to a template."
+        }
+    }
+}
