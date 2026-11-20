@@ -571,6 +571,46 @@ if [ "${ARCH}" = "aarch64" ] && [ -z "${PBS_INSTALL_VERSION}" ]; then
     PBS_INSTALL_VERSION="${PIPBS_PINNED_VERSION:-}"
 fi
 
+# ARM64 only: the API check above says nothing about whether apt can co-install
+# pipbs's PBS next to pxvirt's PVE. 2026-11-19: pipbs 4.2.11-1 resolved only by
+# REMOVING proxmox-ve + pve-manager (pve-apt-hook then aborts the install), while
+# 4.2.9-1 had installed fine. Dry-run the install and, if it would remove any PVE
+# package, fall back to the newest pipbs version whose install removes nothing PVE.
+_pbs_install_ok() {
+    # $1 = apt package spec (proxmox-backup-server or proxmox-backup-server=<ver>)
+    # OK = dry-run resolves (exit 0 — an unresolvable older pin prints no Remv
+    # lines, so exit status matters too) AND removes no PVE package.
+    local sim
+    sim="$(apt-get -s install "$1" 2>/dev/null)" || return 1
+    ! printf '%s\n' "${sim}" \
+        | grep -qE '^Remv (proxmox-ve|pve-manager|qemu-server|pve-container|pve-cluster) '
+}
+if [ "${ARCH}" = "aarch64" ]; then
+    _spec="proxmox-backup-server${PBS_INSTALL_VERSION:+=${PBS_INSTALL_VERSION}}"
+    if ! _pbs_install_ok "${_spec}"; then
+        echo "  WARNING: installing ${_spec} would remove PVE packages (or does not resolve) — searching older pipbs versions..."
+        _found=""
+        while IFS= read -r _v; do
+            [ -n "${PBS_INSTALL_VERSION}" ] && dpkg --compare-versions "${_v}" ge "${PBS_INSTALL_VERSION}" && continue
+            if _pbs_install_ok "proxmox-backup-server=${_v}"; then
+                _found="${_v}"
+                break
+            fi
+            echo "    ${_v}: would also remove PVE packages (or does not resolve)"
+        done < <(apt-cache madison proxmox-backup-server 2>/dev/null \
+            | awk -F'|' '{gsub(/ /,"",$2); print $2}' | sort -rV)
+        if [ -z "${_found}" ]; then
+            echo "ERROR: no pipbs proxmox-backup-server version installs without removing proxmox-ve."
+            echo "  pxvirt and pipbs are out of step — check both repos before retrying:"
+            echo "    pxvirt: https://us.mirrors.lierfang.com/pxcloud/pxvirt"
+            echo "    pipbs:  https://github.com/dexogen/pipbs"
+            exit 1
+        fi
+        echo "  Using pipbs proxmox-backup-server=${_found} (installs alongside current PVE)"
+        PBS_INSTALL_VERSION="${_found}"
+    fi
+fi
+
 if [ -n "${PBS_INSTALL_VERSION}" ]; then
     apt_get install -y "proxmox-backup-server=${PBS_INSTALL_VERSION}"
 else

@@ -80,6 +80,8 @@ PVE is **installed by the script** during the CI run (`restore-1-install.sh` Ste
 
 Full QEMU emulation means arm64 pipelines run **3–5× slower** than x86_64.
 
+Since every arm64 run installs the *latest* pxvirt and pipbs packages, these jobs are also the early warning for drift between the two community repos. Example: on 2026-11-19, pipbs PBS 4.2.11-1 could only be installed by removing `proxmox-ve`, so `pve-apt-hook` aborted the "Install tools" stage. `restore-1-install.sh` now dry-runs the PBS install and falls back to the newest pipbs version that keeps PVE. If the log shows that fallback, check upstream before you upgrade the real Pi.
+
 | Node | Role | Access method |
 |---|---|---|
 | LXC 200 | Jenkins agent, pipeline executor | — |

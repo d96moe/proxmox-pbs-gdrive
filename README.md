@@ -137,6 +137,11 @@ backup-pve-config.sh (nightly at 04:00)
 > dpkg -l proxmox-ve proxmox-backup-server | awk '/^ii/{print $2, $3}'
 > ```
 > If only one repo has a new version, wait for the other to catch up.
+>
+> A matching API version is not enough on its own: a new pipbs release can still pull dependencies that conflict with the installed pxvirt PVE, so apt "solves" it by **removing `proxmox-ve`/`pve-manager`**. `pve-apt-hook` blocks that, and the install fails. So before installing PBS, `restore-1-install.sh` dry-runs `apt-get -s install proxmox-backup-server`. If that would remove a PVE package, or doesn't resolve, the script falls back to the newest pipbs version that installs cleanly, and fails only if none does. On an existing ARM64 host, run the same dry-run before upgrading PBS:
+> ```bash
+> apt-get -s install proxmox-backup-server | grep '^Remv'   # must print nothing
+> ```
 
 ---
 
