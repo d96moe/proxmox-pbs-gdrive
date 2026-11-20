@@ -74,7 +74,7 @@ find "${CACHE}" -maxdepth 1 -name '*-raspios-*-arm64-lite.img*' \
 echo "=== Step 2: Debian ${DEBIAN_CODENAME} arm64 cloud kernel + initrd + modules ==="
 # =============================================================================
 DEB_IMAGE_FILENAME=$(curl -fsSL "https://cloud.debian.org/images/cloud/${DEBIAN_CODENAME}/daily/latest/" \
-    | grep -oE 'debian-[0-9]+-genericcloud-arm64-daily\.qcow2' | sort -u | head -1)
+    | grep -oE 'debian-[0-9]+-genericcloud-arm64-daily\.qcow2' | sort -u | awk 'NR==1')
 [ -z "${DEB_IMAGE_FILENAME}" ] && { echo "ERROR: no genericcloud-arm64-daily image found"; exit 1; }
 DEB_QCOW="${CACHE}/${DEB_IMAGE_FILENAME}"
 # "daily/latest" — always refresh so the kernel tracks Debian's current one
@@ -99,7 +99,11 @@ for k in VIRTIO_PCI EXT4_FS EFI_STUB; do
     grep -q "^CONFIG_${k}=y" "${WORK}/deb/boot/config-${KVER}" \
         || { echo "ERROR: ${KVER} lacks CONFIG_${k}=y"; exit 1; }
 done
-lsinitramfs "${WORK}/deb/boot/initrd.img-${KVER}" | grep -q 'virtio_scsi' \
+# Capture first, then grep: `lsinitramfs | grep -q` lets grep exit on the first
+# match, the zstd inside lsinitramfs dies of SIGPIPE ("zstd failed") and
+# pipefail turns a successful check into a failure.
+lsinitramfs "${WORK}/deb/boot/initrd.img-${KVER}" > "${WORK}/initrd.list"
+grep -q 'virtio_scsi' "${WORK}/initrd.list" \
     || { echo "ERROR: initrd for ${KVER} has no virtio_scsi module"; exit 1; }
 
 # =============================================================================
