@@ -8,9 +8,12 @@
 // pxvirt/pipbs/Pi OS dependency clash the same night it appears, instead of
 // 30 minutes into a fully emulated DR run (or on install day).
 //
+// Runs for BOTH PVE sources — pxvirt (the cabin today) and official Proxmox
+// arm64 (the migration target); the job result is the worse of the two:
 //   green    latest PVE + latest pipbs PBS install together
 //   UNSTABLE latest PBS conflicts, the self-hosted PBS fallback still works
 //   red      PVE itself does not resolve, or even the fallback conflicts
+// The build description shows both, e.g. "pxvirt=yellow (PBS fallback), official=green".
 //
 // Needs no PVE host and no ci-vm-arm64 lock (nothing is booted).
 // =============================================================================
@@ -43,11 +46,19 @@ pipeline {
                     ssh $SSH_OPTS root@$BUILDER "cat > $L2_DIR/ci/check-arm64-deps.sh" < ci/check-arm64-deps.sh
                 '''
                 script {
-                    def rc = sh(returnStatus: true, script: 'ssh $SSH_OPTS root@$BUILDER "cd $L2_DIR && bash ci/check-arm64-deps.sh"')
-                    if (rc == 3) {
-                        unstable('Latest pipbs PBS cannot co-install with pxvirt PVE — the self-hosted PBS fallback still works')
-                    } else if (rc != 0) {
-                        error('arm64 dependency check FAILED — see RESULT line above')
+                    // Both PVE sources: pxvirt (what the cabin runs today) and
+                    // official (the migration target). The job shows the worse one.
+                    def rc = [:]
+                    for (src in ['pxvirt', 'official']) {
+                        echo "===== PVE_ARM64_SOURCE=${src} ====="
+                        rc[src] = sh(returnStatus: true, script: "ssh \$SSH_OPTS root@\$BUILDER 'cd \$L2_DIR && PVE_ARM64_SOURCE=${src} bash ci/check-arm64-deps.sh'")
+                    }
+                    def summary = rc.collect { k, v -> "${k}=" + (v == 0 ? 'green' : v == 3 ? 'yellow (PBS fallback)' : 'RED') }.join(', ')
+                    currentBuild.description = summary
+                    if (rc.values().any { it != 0 && it != 3 }) {
+                        error("arm64 dependency check FAILED: ${summary}")
+                    } else if (rc.values().any { it == 3 }) {
+                        unstable("arm64 dependency check: ${summary}")
                     }
                 }
             }

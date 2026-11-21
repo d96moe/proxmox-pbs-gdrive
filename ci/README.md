@@ -233,6 +233,8 @@ Today only the Pi OS template (9003) is built on the builder. Templates 9001/900
   A simulation fails if it does not resolve, or if it would remove a PVE package.
 - **Result:** green when the latest of both install together, **UNSTABLE** when only the PBS fallback works, red otherwise.
 
+The job runs this for **both** PVE sources, pxvirt and official, and its result is the worse of the two; the build description shows both. The first runs on 2026-11-21 gave pxvirt yellow (PBS fallback needed) and official green: official ships `proxmox-mail-forward` 1.1.0, so the latest pipbs PBS installs with no fallback.
+
 It would have flagged the 2026-11 pipbs 4.2.11-1 clash (`Breaks: proxmox-mail-forward (<< 1.1.0)`, while pxvirt ships 1.0.2) the same night it appeared. apt's own solver output in the log names the conflicting packages.
 
 ### VM Templates
@@ -285,6 +287,12 @@ The disk is built on the **CI builder VM** (see *Where things run*). The PVE hos
 In test-automation terms this is a virtual-ECU **L3** setup: production base software with only the hardware-specific boot layer abstracted. The boot chain (Pi firmware, Pi kernel, RP1 NIC, NVMe boot) is not covered and needs a manual test on real hardware.
 
 *Smoke test before templating.* The job boots a throwaway clone (VM 9198) and checks that it reached a Pi OS userland, that the swapped kernel is running, the Pi apt source is present, cloud-init finished, network/DNS/apt work and `/boot/firmware` is mounted. Only then does it run `qm template 9003`, so a broken image never becomes the template.
+
+*PVE source.* Both arm64 pipelines also take `PVE_ARM64_SOURCE`:
+- `pxvirt` (default) is the community port the cabin runs today.
+- `official` is Proxmox's own arm64 build, PVE 9.2+.
+
+PBS comes from pipbs either way, because there is no official PBS arm64 build. On the official source, `proxmox-ve` pulls in `proxmox-default-kernel`. A Pi keeps booting its own rpi kernel regardless: Pi OS's `z50-raspi-firmware` kernel and initramfs hooks only copy `*-rpi-*` kernels to `/boot/firmware`, and they skip any other kernel with "Unsupported kernel version".
 
 *Using it.* Both arm64 pipelines take a `TEMPLATE_ID` build parameter. `9003` is the default since 2026-11-21 and is used by the scheduled runs; the first full Pi OS DR run passed 7/7. `9002` is the Debian comparison baseline. Its weekly refresh keeps running until 9003 has proven stable, then it can be retired.
 

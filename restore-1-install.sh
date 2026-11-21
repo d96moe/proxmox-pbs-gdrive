@@ -238,7 +238,16 @@ source "${SCRIPT_DIR}/config.env"
 # Step 0 (aarch64 only): Install Proxmox VE if not already present
 # =============================================================================
 if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
-    echo "=== Step 0: Install Proxmox VE (arm64 / pxvirt) ==="
+    # Where PVE comes from on arm64:
+    #   pxvirt   — community PVE arm64 port (what the cabin Pi runs today; default)
+    #   official — Proxmox's own arm64 build (PVE 9.2+). PBS stays pipbs either
+    #              way: there is no official PBS arm64 build.
+    PVE_ARM64_SOURCE="${PVE_ARM64_SOURCE:-pxvirt}"
+    case "${PVE_ARM64_SOURCE}" in
+        pxvirt|official) ;;
+        *) echo "ERROR: PVE_ARM64_SOURCE must be 'pxvirt' or 'official' (got '${PVE_ARM64_SOURCE}')"; exit 1 ;;
+    esac
+    echo "=== Step 0: Install Proxmox VE (arm64 / ${PVE_ARM64_SOURCE}) ==="
     echo "  pvesh not found — PVE not yet installed."
     echo ""
 
@@ -319,30 +328,44 @@ iface vmbr0 inet static
     bridge-fd 0
 EOF
 
-    # Add pxvirt repo (community PVE ARM64 port) — see lib/arm64-repos.sh
-    add_pxvirt_repo "${VERSION_CODENAME}"
-
-    # Temporarily add pipbs repo so we can compare versions before installing anything
     apt_get install -y ca-certificates curl gnupg
-    add_pipbs_repo "${VERSION_CODENAME}"
-    apt_get update
-
-    # Check pxvirt vs pipbs API compatibility BEFORE installing either
-    echo "  Checking pxvirt/pipbs compatibility via package metadata..."
     PVE_INSTALL_VERSION=""
-    _arm64_check_compat
+    if [ "${PVE_ARM64_SOURCE}" = "official" ]; then
+        # Official Proxmox arm64 repo — see lib/arm64-repos.sh. Package set per
+        # the official "Install Proxmox VE on Debian 13 Trixie" wiki, WITHOUT its
+        # "install proxmox-default-kernel + reboot" step: a Pi must keep booting
+        # its own rpi kernel. proxmox-ve still pulls in proxmox-default-kernel as
+        # a dependency, but it is never booted — Pi OS's z50-raspi-firmware
+        # kernel/initramfs hooks only copy *-rpi-* kernels to /boot/firmware
+        # (anything else: "Unsupported kernel version - skipping setup").
+        add_official_pve_repo "${VERSION_CODENAME}"
+        apt_get update
+        PVE_PKGS=(proxmox-ve postfix open-iscsi chrony)
+    else
+        # pxvirt (community PVE ARM64 port) — see lib/arm64-repos.sh
+        add_pxvirt_repo "${VERSION_CODENAME}"
 
-    # Remove pipbs repo — Step 1 will re-add it properly after reboot
-    rm -f /etc/apt/sources.list.d/pipbs.list
-    apt_get update -qq
+        # Temporarily add pipbs repo so we can compare versions before installing anything
+        add_pipbs_repo "${VERSION_CODENAME}"
+        apt_get update
+
+        # Check pxvirt vs pipbs API compatibility BEFORE installing either
+        echo "  Checking pxvirt/pipbs compatibility via package metadata..."
+        _arm64_check_compat
+
+        # Remove pipbs repo — Step 1 will re-add it properly after reboot
+        rm -f /etc/apt/sources.list.d/pipbs.list
+        apt_get update -qq
+        PVE_PKGS=(proxmox-ve pve-qemu-kvm)
+    fi
 
     for _attempt in 1 2 3; do
         if [ -n "${PVE_INSTALL_VERSION}" ]; then
-            apt_get install -y "proxmox-ve=${PVE_INSTALL_VERSION}" pve-qemu-kvm && break
+            apt_get install -y "proxmox-ve=${PVE_INSTALL_VERSION}" "${PVE_PKGS[@]:1}" && break
         else
-            apt_get install -y proxmox-ve pve-qemu-kvm && break
+            apt_get install -y "${PVE_PKGS[@]}" && break
         fi
-        echo "  pxvirt install attempt ${_attempt}/3 failed, retrying in 15s..."
+        echo "  ${PVE_ARM64_SOURCE} PVE install attempt ${_attempt}/3 failed, retrying in 15s..."
         sleep 15
         rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null || true
         dpkg --configure -a 2>/dev/null || true
@@ -350,15 +373,23 @@ EOF
     done
     command -v pvesh &>/dev/null || { echo "ERROR: proxmox-ve install failed after 3 attempts"; exit 1; }
 
-    # The proxmox-ve package's own postinst re-registers its documented default
-    # apt source (bare mirrors.lierfang.com, codename bookworm) regardless of
-    # what we configured above. Force every lierfang.com source back onto the
-    # working mirror + real codename (see lib/arm64-repos.sh).
-    echo "  Fixing proxmox-ve's auto-added pxvirt repo entry (wrong mirror/codename)..."
-    fix_pxvirt_sources "${VERSION_CODENAME}"
+    if [ "${PVE_ARM64_SOURCE}" = "pxvirt" ]; then
+        # The proxmox-ve package's own postinst re-registers its documented default
+        # apt source (bare mirrors.lierfang.com, codename bookworm) regardless of
+        # what we configured above. Force every lierfang.com source back onto the
+        # working mirror + real codename (see lib/arm64-repos.sh).
+        echo "  Fixing proxmox-ve's auto-added pxvirt repo entry (wrong mirror/codename)..."
+        fix_pxvirt_sources "${VERSION_CODENAME}"
+    fi
 
-    # Remove enterprise repos (require subscription, cause 401)
+    # Remove enterprise repos (require a subscription, apt update fails with 401):
+    # by filename, and any source file pointing at enterprise.proxmox.com (PVE 9
+    # also ships deb822 *.sources files, e.g. for Ceph).
     rm -f /etc/apt/sources.list.d/*enterprise*
+    for _f in $(grep -l "enterprise\.proxmox\.com" /etc/apt/sources.list.d/* 2>/dev/null || true); do
+        echo "  Removing enterprise repo source ${_f}"
+        rm -f "${_f}"
+    done
     apt_get update -qq
 
     # Switch to 4k page-size kernel — required for PBS on Pi5

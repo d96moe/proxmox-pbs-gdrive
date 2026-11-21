@@ -28,6 +28,8 @@ pipeline {
         //        2026-11-21 (first full Pi OS DR run: dr-arm64 #65, 7/7 passed).
         // 9002 = Debian trixie arm64 cloud image — kept as a comparison baseline.
         string(name: 'TEMPLATE_ID', defaultValue: '9003', description: 'arm64 template VM to clone (9003 Pi OS Lite = default, 9002 Debian baseline)')
+        // pxvirt = community PVE port (the cabin today); official = Proxmox arm64 (PVE 9.2+). PBS is pipbs either way.
+        choice(name: 'PVE_ARM64_SOURCE', choices: ['pxvirt', 'official'], description: 'Where restore-1-install.sh installs PVE from on arm64')
     }
 
     triggers {
@@ -142,16 +144,16 @@ ENDSSH
 
         stage('Install PVE (restore-1-install.sh Step 0)') {
             steps {
-                echo "Running restore-1-install.sh — Step 0 installs pxvirt and reboots..."
+                echo "Running restore-1-install.sh — Step 0 installs PVE (${params.PVE_ARM64_SOURCE}) and reboots..."
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH' || true
 set -euo pipefail
 cd ${SCRIPTS_DIR}
 cp ci/config_ci_arm64.env config.env
-CI=true ROOT_PASSWORD="ci-arm64-root" bash restore-1-install.sh
+CI=true PVE_ARM64_SOURCE=${params.PVE_ARM64_SOURCE} ROOT_PASSWORD="ci-arm64-root" bash restore-1-install.sh
 ENDSSH
                 """
-                echo "VM is rebooting after pxvirt install. Waiting for SSH (max 150s)..."
+                echo "VM is rebooting after PVE (${params.PVE_ARM64_SOURCE}) install. Waiting for SSH (max 150s)..."
                 sh """
                     sleep 30
                     for i in \$(seq 1 24); do

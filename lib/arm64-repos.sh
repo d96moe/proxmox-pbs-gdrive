@@ -18,6 +18,14 @@
 PXVIRT_REPO_URL="https://us.mirrors.lierfang.com/pxcloud/pxvirt"
 PXVIRT_KEY_URL="${PXVIRT_REPO_URL}/pveport.gpg"
 
+# Official Proxmox VE arm64 (PVE 9.2+, Aug 2026). Per the official "Install
+# Proxmox VE on Debian 13 Trixie" wiki: deb822 source + archive keyring whose
+# sha256 is published there. Only codenames with a known keyring hash are
+# accepted (fail closed). NOTE: official PBS has no arm64 build — pipbs stays.
+PVE_OFFICIAL_REPO_URL="http://download.proxmox.com/debian/pve"
+PVE_OFFICIAL_KEYRING_URL_TEMPLATE="https://enterprise.proxmox.com/debian/proxmox-archive-keyring-%s.gpg"
+PVE_OFFICIAL_KEYRING_SHA256_trixie="136673be77aba35dcce385b28737689ad64fd785a797e57897589aed08db6e45"
+
 # pipbs = community PBS arm64 build (no official PBS arm64 exists).
 PIPBS_REPO_URL="https://dexogen.github.io/pipbs/"
 PIPBS_KEY_URL="https://dexogen.github.io/pipbs/gpg.key"
@@ -57,6 +65,30 @@ add_pxvirt_repo() {
     mkdir -p "${root}/etc/apt/trusted.gpg.d" "${root}/etc/apt/sources.list.d"
     fetch_gpg_key "${PXVIRT_KEY_URL}" "${root}/etc/apt/trusted.gpg.d/pxvirt.gpg"
     echo "deb ${PXVIRT_REPO_URL} ${codename} main" > "${root}/etc/apt/sources.list.d/pxvirt.list"
+}
+
+# add_official_pve_repo <codename> [root]
+add_official_pve_repo() {
+    local codename="$1" root="${2:-}" want_var url keyring
+    want_var="PVE_OFFICIAL_KEYRING_SHA256_${codename}"
+    if [ -z "${!want_var:-}" ]; then
+        echo "ERROR: no known sha256 for the Proxmox archive keyring of '${codename}' — add it from the official wiki first"
+        return 1
+    fi
+    # shellcheck disable=SC2059
+    url="$(printf "${PVE_OFFICIAL_KEYRING_URL_TEMPLATE}" "${codename}")"
+    keyring="${root}/usr/share/keyrings/proxmox-archive-keyring.gpg"
+    mkdir -p "${root}/usr/share/keyrings" "${root}/etc/apt/sources.list.d"
+    curl -fsSL --retry 3 -o "${keyring}" "${url}"
+    echo "${!want_var}  ${keyring}" | sha256sum -c --quiet - \
+        || { echo "ERROR: Proxmox archive keyring checksum mismatch (${url})"; rm -f "${keyring}"; return 1; }
+    cat > "${root}/etc/apt/sources.list.d/pve-install-repo.sources" << EOF
+Types: deb
+URIs: ${PVE_OFFICIAL_REPO_URL}
+Suites: ${codename}
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
 }
 
 # add_pipbs_repo <codename> [root]

@@ -148,6 +148,8 @@ backup-pve-config.sh (nightly at 04:00)
 >
 > Example: in 2026-11, pipbs 4.2.11-1 declared `Breaks: proxmox-mail-forward (<< 1.1.0)`, but pxvirt only ships 1.0.2, which `pve-manager` depends on. The fallback is 4.2.1-1, the version the cabin Pi runs. After pxvirt catches up, run `apt-mark unhold proxmox-backup-server proxmox-backup-docs` on a host that got the fallback.
 >
+> **Official Proxmox arm64:** since PVE 9.2 (2026-08), Proxmox ships an official arm64 PVE. There is still no official arm64 PBS. Set `PVE_ARM64_SOURCE="official"` in `config.env` to install PVE from Proxmox's own repo instead of pxvirt; PBS still comes from pipbs. Official PVE ships `proxmox-mail-forward` 1.1.0, which removes the pipbs 4.2.11 conflict described above. Validate it in CI before switching a real host.
+>
 > On an existing ARM64 host, run the same dry-run before upgrading PBS:
 > ```bash
 > apt-get -s install proxmox-backup-server | grep '^Remv'   # must print nothing
