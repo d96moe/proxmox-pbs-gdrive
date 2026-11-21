@@ -150,6 +150,17 @@ backup-pve-config.sh (nightly at 04:00)
 >
 > **Official Proxmox arm64:** since PVE 9.2 (2026-08), Proxmox ships an official arm64 PVE. There is still no official arm64 PBS. Set `PVE_ARM64_SOURCE="official"` in `config.env` to install PVE from Proxmox's own repo instead of pxvirt; PBS still comes from pipbs. Official PVE ships `proxmox-mail-forward` 1.1.0, which removes the pipbs 4.2.11 conflict described above. Validate it in CI before switching a real host.
 >
+> **Migrating an existing pxvirt host:** `migrate-arm64-pxvirt-to-official.sh` handles the move. By default it is a dry run that changes nothing: it simulates the full-upgrade against the official repos through a private apt configuration, then reports the versions, removals, kernel side effects, holds and any pxvirt-only packages that would be left behind.
+>
+> `--apply --on-site` performs the migration:
+> 1. vzdump of every guest to PBS, plus a tarball of `/etc/pve`, `/etc/network/interfaces` and `/etc/apt`;
+> 2. swap the sources from pxvirt to the official repo;
+> 3. release the `proxmox-widget-toolkit` hold and the PBS fallback holds;
+> 4. `full-upgrade`, keeping existing config files;
+> 5. verify PVE is 9.2+ and `/etc/network/interfaces` is unchanged.
+>
+> It refuses to run remotely, because the upgrade replaces the network stack. The whole path is tested in CI first (`MIGRATE_TO_OFFICIAL=true` on the arm64 backup pipeline).
+>
 > On an existing ARM64 host, run the same dry-run before upgrading PBS:
 > ```bash
 > apt-get -s install proxmox-backup-server | grep '^Remv'   # must print nothing
@@ -165,6 +176,7 @@ proxmox-pbs-gdrive/
 ├── restore-2-auth.sh         # DR step 5: restore rclone auth + PVE config from GDrive
 ├── restore-3-pve.sh          # Fresh step 6 / DR step 6: wire PBS into PVE
 ├── config.env.example        # Template — copy to config.env and fill in your values
+├── migrate-arm64-pxvirt-to-official.sh  # arm64: move a pxvirt PVE host to official Proxmox arm64 (dry run by default)
 ├── lib/
 │   └── arm64-repos.sh        # Shared arm64 repo definitions (pxvirt, pipbs, PBS fallback), sourced by restore-1 and the CI dependency check
 ├── scripts/

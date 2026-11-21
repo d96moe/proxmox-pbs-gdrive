@@ -11,6 +11,7 @@
 # Every add_* function takes an optional root prefix ("" = the live system,
 # or a chroot directory) so the same code writes into either.
 # =============================================================================
+# shellcheck disable=SC2034  # constants are used by the scripts that source this file
 
 # pxvirt = community PVE arm64 port. Use the us. mirror subdomain, NOT the bare
 # download.lierfang.com / mirrors.lierfang.com domains: those sit behind a

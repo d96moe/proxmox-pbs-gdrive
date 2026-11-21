@@ -294,6 +294,14 @@ In test-automation terms this is a virtual-ECU **L3** setup: production base sof
 
 PBS comes from pipbs either way, because there is no official PBS arm64 build. On the official source, `proxmox-ve` pulls in `proxmox-default-kernel`. A Pi keeps booting its own rpi kernel regardless: Pi OS's `z50-raspi-firmware` kernel and initramfs hooks only copy `*-rpi-*` kernels to `/boot/firmware`, and they skip any other kernel with "Unsupported kernel version".
 
+*Upgrade path.* With `MIGRATE_TO_OFFICIAL=true` (requires `PVE_ARM64_SOURCE=pxvirt`), the arm64 backup pipeline tests the cabin's migration:
+1. Install with pxvirt.
+2. Reproduce the cabin's `proxmox-widget-toolkit` hold and guest autostart.
+3. Create the test LXC and back it up.
+4. Run `migrate-arm64-pxvirt-to-official.sh` as a dry run, and fail if `/etc/apt` changes at all.
+5. Run it with `--apply`, then reboot.
+6. Run Scenario A plus `ci/spec/migration_spec.sh`. That spec checks PVE 9.2+, no lierfang source, the official repo, no held proxmox packages, the newest PBS (no fallback), `/etc/network/interfaces` unchanged, pve-cluster active, the pre-migration PBS backups still listed, and LXC 100 running.
+
 *Using it.* Both arm64 pipelines take a `TEMPLATE_ID` build parameter. `9003` is the default since 2026-11-21 and is used by the scheduled runs; the first full Pi OS DR run passed 7/7. `9002` is the Debian comparison baseline. Its weekly refresh keeps running until 9003 has proven stable, then it can be retired.
 
 ---

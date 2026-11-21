@@ -26,6 +26,10 @@ pipeline {
         string(name: 'TEMPLATE_ID', defaultValue: '9003', description: 'arm64 template VM to clone (9003 Pi OS Lite = default, 9002 Debian baseline)')
         // pxvirt = community PVE port (the cabin today); official = Proxmox arm64 (PVE 9.2+). PBS is pipbs either way.
         choice(name: 'PVE_ARM64_SOURCE', choices: ['pxvirt', 'official'], description: 'Where restore-1-install.sh installs PVE from on arm64')
+        // Upgrade-path test for the cabin: install with pxvirt (+ the cabin's hold on
+        // proxmox-widget-toolkit), back up, then migrate-arm64-pxvirt-to-official.sh
+        // --apply, reboot, and run Scenario A + ci/spec/migration_spec.sh.
+        booleanParam(name: 'MIGRATE_TO_OFFICIAL', defaultValue: false, description: 'After the pxvirt install + backup, migrate to official Proxmox arm64 and re-test (needs PVE_ARM64_SOURCE=pxvirt)')
     }
 
     triggers {
@@ -50,6 +54,11 @@ pipeline {
 
         stage('Clone VM') {
             steps {
+                script {
+                    if (params.MIGRATE_TO_OFFICIAL && params.PVE_ARM64_SOURCE != 'pxvirt') {
+                        error('MIGRATE_TO_OFFICIAL needs PVE_ARM64_SOURCE=pxvirt (it tests the pxvirt → official upgrade)')
+                    }
+                }
                 echo "Cloning arm64 template ${params.TEMPLATE_ID} -> VM ${VM_ID} (${env.BUILD_TAG})"
                 sh """
                     ssh ${SSH_OPTS} root@${PVE_HOST} \
@@ -202,7 +211,10 @@ ENDSSH
                         [ "$AGE" -gt 30 ] && { echo "Fallback active >30 days — check pxvirt/pipbs, bump or drop the fallback"; exit 1; }
                         exit 3
                     ''')
-                    if (rc == 3) {
+                    if (rc == 3 && params.MIGRATE_TO_OFFICIAL) {
+                        // Expected before the migration; migration_spec.sh asserts it is gone afterwards.
+                        echo 'PBS fallback in use before the migration (expected) — migration_spec checks it is resolved'
+                    } else if (rc == 3) {
                         unstable('PBS installed from self-hosted arm64 fallback — pipbs latest cannot co-install with pxvirt PVE')
                     } else if (rc != 0) {
                         error('PBS arm64 fallback has been in use for more than 30 days')
@@ -338,6 +350,46 @@ ENDSSH
             }
         }
 
+        stage('Migrate pxvirt → official (MIGRATE_TO_OFFICIAL)') {
+            when { expression { params.MIGRATE_TO_OFFICIAL } }
+            steps {
+                echo "Upgrade-path test: pxvirt → official Proxmox arm64 (what the cabin will do)..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+set -euo pipefail
+cd ${SCRIPTS_DIR}
+# Mirror the cabin: proxmox-widget-toolkit is held there since 2026-03-08, and its
+# guests autostart. The migration must cope with both.
+apt-mark hold proxmox-widget-toolkit
+pct set 100 --onboot 1
+echo "--- dry run (must change nothing) ---"
+md5_before=\$(find /etc/apt -type f -exec md5sum {} + | sort | md5sum)
+CI=true bash migrate-arm64-pxvirt-to-official.sh
+md5_after=\$(find /etc/apt -type f -exec md5sum {} + | sort | md5sum)
+[ "\${md5_before}" = "\${md5_after}" ] || { echo "ERROR: dry run modified /etc/apt"; exit 1; }
+echo "--- apply ---"
+CI=true bash migrate-arm64-pxvirt-to-official.sh --apply
+ENDSSH
+                """
+                echo "Rebooting after the migration, waiting for SSH (max 5 min)..."
+                sh """
+                    ssh ${SSH_OPTS} root@${VM_IP} 'systemctl reboot' || true
+                    sleep 45
+                    for i in \$(seq 1 50); do
+                        ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH back after migration reboot" && break
+                        [ "\$i" -eq 50 ] && { echo "ERROR: VM did not come back after the migration reboot"; exit 1; }
+                        sleep 5
+                    done
+                    ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
+systemctl reset-failed pve-cluster 2>/dev/null || true
+for i in \$(seq 1 12); do systemctl is-active -q pve-cluster && break; systemctl restart pve-cluster; sleep 5; done
+for i in \$(seq 1 24); do pct status 100 | grep -q running && break; sleep 5; done
+pveversion | head -1; pct status 100
+ENDSSH
+                """
+            }
+        }
+
         stage('Run ShellSpec (Scenario A / arm64)') {
             steps {
                 echo "Running ShellSpec integration tests..."
@@ -346,6 +398,15 @@ ENDSSH
                         'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit ci/spec/scenario_a_spec.sh' \
                         > shellspec-a-arm64.xml
                 """
+                script {
+                    if (params.MIGRATE_TO_OFFICIAL) {
+                        sh """
+                            ssh ${SSH_OPTS} root@${VM_IP} \
+                                'cd /opt/proxmox-restore && /usr/local/bin/shellspec --shell bash --format junit ci/spec/migration_spec.sh' \
+                                > shellspec-migration-arm64.xml
+                        """
+                    }
+                }
             }
         }
 
