@@ -163,6 +163,8 @@ proxmox-pbs-gdrive/
 ├── restore-2-auth.sh         # DR step 5: restore rclone auth + PVE config from GDrive
 ├── restore-3-pve.sh          # Fresh step 6 / DR step 6: wire PBS into PVE
 ├── config.env.example        # Template — copy to config.env and fill in your values
+├── lib/
+│   └── arm64-repos.sh        # Shared arm64 repo definitions (pxvirt, pipbs, PBS fallback), sourced by restore-1 and the CI dependency check
 ├── scripts/
 │   ├── backup-pve-config.sh  # Daily PVE config backup (config.db, /etc/pve, rclone token, etc.)
 │   │                         # Installed to /usr/local/bin/ by restore-1-install.sh

@@ -18,7 +18,7 @@ cloud-init status --wait >/dev/null 2>&1 || true
 apt-get update -qq
 apt-get install -y -qq \
     qemu-guest-agent \
-    curl wget ca-certificates xz-utils zstd \
+    curl wget ca-certificates gnupg xz-utils zstd \
     qemu-utils fdisk dosfstools e2fsprogs parted kpartx \
     initramfs-tools-core \
     grub-common \

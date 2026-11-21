@@ -22,6 +22,7 @@ Jenkins pipelines automatically verify the scripts end-to-end on real Proxmox VM
 |---|---|---|---|---|
 | Template refresh (x86) | `proxmox-ci-template-refresh` | `ci/Jenkinsfile.template-refresh` | Sundays ~03:00 | Rebuilds CI template VM 9001 from a fresh Bookworm image |
 | Template refresh (ARM64) | `proxmox-ci-template-refresh-arm64` | `ci/Jenkinsfile.template-refresh-arm64` | Sundays ~04:00 | Rebuilds CI template VM 9002 from a fresh Trixie arm64 image |
+| Dependency check (ARM64, L2) | `proxmox-ci-arm64-deps` | `ci/Jenkinsfile.arm64-deps` | Nightly ~02:00 | Simulates installing pxvirt PVE + pipbs PBS in an arm64 chroot of the latest Pi OS (~2 min). Green = latest of both installs together, yellow = only the PBS fallback works, red = PVE does not resolve |
 | Template refresh (ARM64, Pi OS) | `proxmox-ci-template-refresh-arm64-pios` | `ci/Jenkinsfile.template-refresh-arm64-pios` | Sundays ~05:00 | Rebuilds VM 9003 from the latest Raspberry Pi OS Lite arm64 (boot layer swapped), smoke-boots a clone, then templates it |
 | Scenario A | `proxmox-ci-backup` | `ci/Jenkinsfile.shellspec` | Nightly ~21:00 | Install + PBS backup + GDrive backup |
 | Scenario B (DR) | `proxmox-ci-dr` | `ci/Jenkinsfile.shellspec-dr` | Sundays ~21:00 | Full DR restore from GDrive |
@@ -216,6 +217,23 @@ ssh root@<builder> bash -s < ci/provision-builder.sh
 `provision-builder.sh` is idempotent: re-run it to bring the tool set up to date.
 
 Today only the Pi OS template (9003) is built on the builder. Templates 9001/9002 still download their cloud image onto the PVE host's ISO storage and are due to move to the builder too.
+
+### arm64 dependency check (L2)
+
+`ci/check-arm64-deps.sh` runs nightly on the CI builder VM through `proxmox-ci-arm64-deps`. It answers in about two minutes what a fully emulated DR run needs 30 to find: can the *current* pxvirt PVE and pipbs PBS still be installed together on the *current* Raspberry Pi OS?
+
+- **Root filesystem:** the latest Pi OS Lite image from the builder cache, the same one template 9003 is built from. It is mounted read-only, with a throw-away tmpfs overlay on top, so nothing is ever written to the image.
+- **Execution:** an arm64 chroot via `qemu-user` (binfmt). It boots no VM and takes no `ci-vm-arm64` lock.
+- **Repositories:** added through `lib/arm64-repos.sh`, the same file `restore-1-install.sh` sources. The check cannot drift from what a real install uses.
+- **What it runs:** apt only *simulates*:
+  1. `dist-upgrade`;
+  2. installing PVE;
+  3. installing PVE together with the latest pipbs PBS;
+  4. if step 3 conflicts, installing PVE together with the self-hosted fallback debs.
+  A simulation fails if it does not resolve, or if it would remove a PVE package.
+- **Result:** green when the latest of both install together, **UNSTABLE** when only the PBS fallback works, red otherwise.
+
+It would have flagged the 2026-11 pipbs 4.2.11-1 clash (`Breaks: proxmox-mail-forward (<< 1.1.0)`, while pxvirt ships 1.0.2) the same night it appeared. apt's own solver output in the log names the conflicting packages.
 
 ### VM Templates
 

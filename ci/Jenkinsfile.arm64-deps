@@ -1,0 +1,56 @@
+// =============================================================================
+// Jenkinsfile.arm64-deps — nightly L2 arm64 dependency check
+//
+// Runs ci/check-arm64-deps.sh on the CI builder VM: in an arm64 chroot of the
+// latest Raspberry Pi OS (read-only image + tmpfs overlay, qemu-user), adds the
+// pxvirt + pipbs repos via lib/arm64-repos.sh (the same code a real install
+// uses) and SIMULATES installing PVE + PBS. Takes about a minute — it catches a
+// pxvirt/pipbs/Pi OS dependency clash the same night it appears, instead of
+// 30 minutes into a fully emulated DR run (or on install day).
+//
+//   green    latest PVE + latest pipbs PBS install together
+//   UNSTABLE latest PBS conflicts, the self-hosted PBS fallback still works
+//   red      PVE itself does not resolve, or even the fallback conflicts
+//
+// Needs no PVE host and no ci-vm-arm64 lock (nothing is booted).
+// =============================================================================
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    triggers {
+        cron('H 2 * * *')  // nightly, well before the arm64 CI runs (H 19)
+    }
+
+    environment {
+        BUILDER  = "192.168.0.248"
+        L2_DIR   = "/srv/ci-build/l2"
+        SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
+    }
+
+    stages {
+        stage('L2 arm64 dependency check') {
+            steps {
+                sh '''
+                    ssh $SSH_OPTS root@$BUILDER "rm -rf --one-file-system $L2_DIR && mkdir -p $L2_DIR/lib $L2_DIR/ci"
+                    ssh $SSH_OPTS root@$BUILDER "cat > $L2_DIR/lib/arm64-repos.sh" < lib/arm64-repos.sh
+                    ssh $SSH_OPTS root@$BUILDER "cat > $L2_DIR/ci/check-arm64-deps.sh" < ci/check-arm64-deps.sh
+                '''
+                script {
+                    def rc = sh(returnStatus: true, script: 'ssh $SSH_OPTS root@$BUILDER "cd $L2_DIR && bash ci/check-arm64-deps.sh"')
+                    if (rc == 3) {
+                        unstable('Latest pipbs PBS cannot co-install with pxvirt PVE — the self-hosted PBS fallback still works')
+                    } else if (rc != 0) {
+                        error('arm64 dependency check FAILED — see RESULT line above')
+                    }
+                }
+            }
+        }
+    }
+}

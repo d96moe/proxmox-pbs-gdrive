@@ -30,6 +30,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARCH="$(uname -m)"
 
+# arm64 community repos (pxvirt/pipbs), fetch_gpg_key and the PBS fallback live
+# in one shared file, so the nightly L2 dependency check (ci/check-arm64-deps.sh)
+# tests exactly what this script installs from.
+if [ ! -f "${SCRIPT_DIR}/lib/arm64-repos.sh" ]; then
+    echo "ERROR: ${SCRIPT_DIR}/lib/arm64-repos.sh missing — copy/clone the whole repository, not just this script."
+    exit 1
+fi
+# shellcheck source=lib/arm64-repos.sh
+. "${SCRIPT_DIR}/lib/arm64-repos.sh"
+
 # Read this machine's own Debian codename rather than hardcoding one —
 # every apt repo line below used to pin a specific codename (bookworm on
 # x86, trixie on arm64), which breaks the moment Debian moves on.
@@ -196,29 +206,7 @@ _arm64_check_compat() {
     echo ""
 }
 
-# Helper: fetch a GPG key with retries. Third-party mirror endpoints
-# occasionally return transient 403/5xx under rate limiting — a bare
-# curl|gpg here has no way to recover and kills the whole pipeline on a
-# blip that's gone moments later. (Note: download.lierfang.com/
-# mirrors.lierfang.com went behind a persistent Cloudflare bot-challenge
-# in 2026-09 that no amount of retrying can pass — that's why the repo
-# URLs below use us.mirrors.lierfang.com instead, confirmed not
-# Cloudflare-protected. Retries here still help with genuinely transient
-# blips like dexogen.github.io's.)
-fetch_gpg_key() {
-    local url="$1" dest="$2" attempt
-    for attempt in 1 2 3 4 5; do
-        if curl -fsSL "${url}" | gpg --batch --no-tty --dearmor > "${dest}" 2>/dev/null \
-            && [ -s "${dest}" ]; then
-            return 0
-        fi
-        echo "  GPG key fetch from ${url} failed (attempt ${attempt}/5), retrying in 10s..."
-        rm -f "${dest}"
-        sleep 10
-    done
-    echo "ERROR: could not fetch GPG key from ${url} after 5 attempts"
-    return 1
-}
+# fetch_gpg_key: see lib/arm64-repos.sh
 
 # Helper: kill any background apt and wait for lists lock before running apt-get
 apt_get() {
@@ -331,19 +319,12 @@ iface vmbr0 inet static
     bridge-fd 0
 EOF
 
-    # Add pxvirt repo (community PVE ARM64 port). Use the us. mirror subdomain,
-    # not the bare download.lierfang.com/mirrors.lierfang.com domain — that one
-    # sits behind a persistent Cloudflare bot-challenge (curl can never pass it).
-    fetch_gpg_key https://us.mirrors.lierfang.com/pxcloud/pxvirt/pveport.gpg /etc/apt/trusted.gpg.d/pxvirt.gpg
-    echo "deb https://us.mirrors.lierfang.com/pxcloud/pxvirt ${VERSION_CODENAME} main" \
-        > /etc/apt/sources.list.d/pxvirt.list
+    # Add pxvirt repo (community PVE ARM64 port) — see lib/arm64-repos.sh
+    add_pxvirt_repo "${VERSION_CODENAME}"
 
     # Temporarily add pipbs repo so we can compare versions before installing anything
     apt_get install -y ca-certificates curl gnupg
-    mkdir -p /etc/apt/keyrings
-    fetch_gpg_key https://dexogen.github.io/pipbs/gpg.key /etc/apt/keyrings/pipbs.gpg
-    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ ${VERSION_CODENAME} main" \
-        > /etc/apt/sources.list.d/pipbs.list
+    add_pipbs_repo "${VERSION_CODENAME}"
     apt_get update
 
     # Check pxvirt vs pipbs API compatibility BEFORE installing either
@@ -371,15 +352,10 @@ EOF
 
     # The proxmox-ve package's own postinst re-registers its documented default
     # apt source (bare mirrors.lierfang.com, codename bookworm) regardless of
-    # what we configured above — that domain sits behind Cloudflare's bot
-    # challenge and bookworm isn't even this host's codename. Force any
-    # lierfang.com source file back onto the working mirror + real codename.
-    if grep -rl "lierfang\.com" /etc/apt/sources.list.d/ 2>/dev/null | grep -q .; then
-        echo "  Fixing proxmox-ve's auto-added pxvirt repo entry (wrong mirror/codename)..."
-        for _f in $(grep -rl "lierfang\.com" /etc/apt/sources.list.d/ 2>/dev/null); do
-            echo "deb https://us.mirrors.lierfang.com/pxcloud/pxvirt ${VERSION_CODENAME} main" > "${_f}"
-        done
-    fi
+    # what we configured above. Force every lierfang.com source back onto the
+    # working mirror + real codename (see lib/arm64-repos.sh).
+    echo "  Fixing proxmox-ve's auto-added pxvirt repo entry (wrong mirror/codename)..."
+    fix_pxvirt_sources "${VERSION_CODENAME}"
 
     # Remove enterprise repos (require subscription, cause 401)
     rm -f /etc/apt/sources.list.d/*enterprise*
@@ -559,10 +535,7 @@ echo "  Host OS codename: ${VERSION_CODENAME}"
 if [ "${ARCH}" = "aarch64" ]; then
     echo "  ARM64 detected — using community pipbs repository..."
     apt_get install -y ca-certificates curl gnupg unzip
-    mkdir -p /etc/apt/keyrings
-    fetch_gpg_key https://dexogen.github.io/pipbs/gpg.key /etc/apt/keyrings/pipbs.gpg
-    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/pipbs.gpg] https://dexogen.github.io/pipbs/ ${VERSION_CODENAME} main" \
-        > /etc/apt/sources.list.d/pipbs.list
+    add_pipbs_repo "${VERSION_CODENAME}"
 else
     echo "  x86_64 detected — using official Proxmox repository..."
     echo "deb http://download.proxmox.com/debian/pbs ${VERSION_CODENAME} pbs-no-subscription" \
@@ -600,13 +573,7 @@ fi
 #      works even when pipbs and pxvirt are out of step.
 # Every attempt is dry-run first; the fallback is only used while 1+2 fail, so
 # installs go back to the latest pipbs automatically once pxvirt catches up.
-PBS_ARM64_FALLBACK_VERSION="4.2.1-1"
-PBS_ARM64_FALLBACK_SINCE="2026-11-20"   # CI goes red if the fallback is used >30 days past this
-PBS_ARM64_FALLBACK_URL="https://github.com/d96moe/proxmox-pbs-gdrive/releases/download/pbs-arm64-${PBS_ARM64_FALLBACK_VERSION}"
-PBS_ARM64_FALLBACK_DEBS="
-2a277745cf8677b6b021a5d9da38d2bc6b9964e97bf1b5e7f8afbe68c1e6817c  proxmox-backup-server_4.2.1-1_arm64.deb
-3f9338dce4e2071e42bb7c51407c864d9dcb5aaa4f52c6e7b1c97e5fc78a3ba1  proxmox-backup-docs_4.2.1-1_all.deb
-"
+# PBS_ARM64_FALLBACK_{VERSION,SINCE,URL,DEBS}: see lib/arm64-repos.sh
 PBS_ARM64_FALLBACK_MARKER="/root/.pbs-arm64-fallback"
 
 _pbs_install_ok() {
