@@ -1,7 +1,8 @@
 // =============================================================================
 // Jenkinsfile.shellspec-dr-arm64  —  Scenario B: DR Restore (arm64 / Pi 5)
 //
-// Template 9002 is vanilla Debian Trixie arm64 (no PVE, no PBS).
+// Clones TEMPLATE_ID (default 9003 = latest Raspberry Pi OS Lite arm64, the real
+// Pi 5 base OS; 9002 = vanilla Debian Trixie arm64 baseline). Neither has PVE/PBS.
 // Full DR scenario tested end-to-end:
 //   Step 0: installs pxvirt (PVE), configures bridge, reboots
 //   Step 1+: installs PBS (pipbs), rclone, restic, resticprofile
@@ -22,10 +23,11 @@ pipeline {
     }
 
     parameters {
-        // 9002 = Debian trixie arm64 cloud image (default, scheduled runs).
         // 9003 = latest Raspberry Pi OS Lite arm64, swapped boot layer only
-        //        (ci/setup-arm64-pios-template.sh) — the real Pi 5 base OS.
-        string(name: 'TEMPLATE_ID', defaultValue: '9002', description: 'arm64 template VM to clone (9002 Debian, 9003 Pi OS Lite)')
+        //        (ci/build-pios-disk.sh) — the real Pi 5 base OS. Default since
+        //        2026-11-21 (first full Pi OS DR run: dr-arm64 #65, 7/7 passed).
+        // 9002 = Debian trixie arm64 cloud image — kept as a comparison baseline.
+        string(name: 'TEMPLATE_ID', defaultValue: '9003', description: 'arm64 template VM to clone (9003 Pi OS Lite = default, 9002 Debian baseline)')
     }
 
     triggers {

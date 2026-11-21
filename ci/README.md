@@ -59,7 +59,7 @@ Physical x86_64 host (PVE)
     │                              ├── PBS installed by restore-1-install.sh
     │                              ├── test LXC created and backed up
     │                              └── destroyed after build
-    └── VM (clone of 9002)   — arm64 PVE node under test, fresh each build
+    └── VM (clone of 9003)   — arm64 PVE node under test (Pi OS), fresh each build
                                    ├── vanilla Debian arm64 (no PVE in template)
                                    ├── run 1: restore-1-install.sh detects no PVE → installs pxvirt, reboots
                                    ├── run 2: restore-1-install.sh installs pipbs, rclone, restic
@@ -75,7 +75,7 @@ Clones template 9001 (Debian Bookworm x86_64, PVE pre-installed). The scripts ru
 
 ### arm64: Fully emulated ARM64 VM on x86_64 host
 
-Clones template 9002 (vanilla Debian Trixie arm64, no PVE). Runs under **full QEMU ARM64 emulation — no KVM acceleration**. No Pi 5 or separate arm64 hardware needed.
+Clones template 9003 by default (latest Raspberry Pi OS Lite arm64, the real Pi 5 base OS, no PVE); `TEMPLATE_ID=9002` runs against the vanilla Debian Trixie baseline instead. Runs under **full QEMU ARM64 emulation — no KVM acceleration**. No Pi 5 or separate arm64 hardware needed.
 
 PVE is **installed by the script** during the CI run (`restore-1-install.sh` Step 0 installs pxvirt and reboots) — this tests the full arm64 install path from scratch.
 
@@ -92,7 +92,7 @@ The "Install tools" stage then reads `/root/.pbs-arm64-fallback` on the CI VM:
 |---|---|---|
 | LXC 200 | Jenkins agent, pipeline executor | — |
 | VM (clone of 9001) | x86_64 PVE node under test | SSH |
-| VM (clone of 9002) | arm64 PVE node under test (QEMU-emulated) | SSH |
+| VM (clone of 9003) | arm64 PVE node under test (QEMU-emulated, Pi OS) | SSH |
 
 ---
 
@@ -225,7 +225,7 @@ Both pipeline families clone a fresh VM from a template for each build and destr
 |---|---|---|---|---|---|
 | 9001 | `restore-test-ci` | x86_64 pipelines | Debian Bookworm x86_64 | Yes | `ci/setup-x86-template.sh` |
 | 9002 | `arm64-restore-ci` | arm64 pipelines (default) | Debian Trixie arm64 | No (installed by CI) | `ci/setup-arm64-template.sh` |
-| 9003 | `arm64-pios-restore-ci` | arm64 pipelines with `TEMPLATE_ID=9003` | **Latest Raspberry Pi OS Lite arm64** (boot layer swapped) | No (installed by CI) | `ci/setup-arm64-pios-template.sh` |
+| 9003 | `arm64-pios-restore-ci` | arm64 pipelines (**default**) | **Latest Raspberry Pi OS Lite arm64** (boot layer swapped) | No (installed by CI) | `ci/build-pios-disk.sh` (builder) + `ci/setup-arm64-pios-template.sh` (PVE, qm only) |
 
 **Why the difference?** x86_64 PVE installs cleanly from official repos so it's baked into the template. For arm64, installing pxvirt (the community ARM64 PVE port) is exactly what we want to test, so the template starts as plain Debian and `restore-1-install.sh` Step 0 installs pxvirt during the CI run.
 
@@ -268,7 +268,7 @@ In test-automation terms this is a virtual-ECU **L3** setup: production base sof
 
 *Smoke test before templating.* The job boots a throwaway clone (VM 9198) and checks that it reached a Pi OS userland, that the swapped kernel is running, the Pi apt source is present, cloud-init finished, network/DNS/apt work and `/boot/firmware` is mounted. Only then does it run `qm template 9003`, so a broken image never becomes the template.
 
-*Using it.* Both arm64 pipelines take a `TEMPLATE_ID` build parameter: `9002` (default, scheduled runs) or `9003`.
+*Using it.* Both arm64 pipelines take a `TEMPLATE_ID` build parameter. `9003` is the default since 2026-11-21 and is used by the scheduled runs; the first full Pi OS DR run passed 7/7. `9002` is the Debian comparison baseline. Its weekly refresh keeps running until 9003 has proven stable, then it can be retired.
 
 ---
 
