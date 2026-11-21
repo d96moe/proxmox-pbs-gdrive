@@ -89,6 +89,38 @@ if grep -rqs 'download\.proxmox\.com/debian/pve' /etc/apt/sources.list /etc/apt/
 fi
 
 # -----------------------------------------------------------------------------
+# Node identity must survive the reboot. pmxcfs (pve-cluster) needs the node name
+# to resolve to a non-loopback IP of this host; otherwise /etc/pve stays empty
+# after the reboot: no GUI, no guests, and root's authorized_keys (a symlink into
+# /etc/pve/priv) no longer works. On Raspberry Pi OS, cloud-init (Imager seed,
+# manage_etc_hosts: true) re-renders /etc/hosts from a template on EVERY boot, so
+# the entry must be in that template, not just in /etc/hosts (CI #307/#309).
+# -----------------------------------------------------------------------------
+NODE="$(hostname)"
+NODE_IP="$(getent ahostsv4 "${NODE}" | awk '$1 !~ /^127\./ {print $1; exit}')"
+if [ -z "${NODE_IP}" ] || ! ip -4 -o addr show | grep -qF " ${NODE_IP}/"; then
+    echo "  ✗ node name ${NODE} does not resolve to a local non-loopback IP (got: ${NODE_IP:-nothing})"
+    echo "RESULT: NOT SAFE — fix /etc/hosts first"; exit 1
+fi
+CI_MANAGES_HOSTS=0
+if command -v cloud-init >/dev/null && [ ! -e /etc/cloud/cloud-init.disabled ] \
+   && grep -qsiE '^\s*manage_etc_hosts:\s*(true|template)' /var/lib/cloud/instance/cloud-config.txt /boot/firmware/user-data; then
+    CI_MANAGES_HOSTS=1
+fi
+if [ ${CI_MANAGES_HOSTS} -eq 1 ]; then
+    if awk -v ip="${NODE_IP}" -v h="${NODE}" '$1 == ip { for (i = 2; i <= NF; i++) if ($i == h) f = 1 } END { exit !f }' \
+         /etc/cloud/templates/hosts.debian.tmpl 2>/dev/null; then
+        echo "  ✓ node identity: ${NODE} → ${NODE_IP}, also in cloud-init's hosts template (survives reboot)"
+    else
+        echo "  ✗ cloud-init rewrites /etc/hosts on every boot, and its template lacks '${NODE_IP} ${NODE}'"
+        echo "    → after the reboot pve-cluster would fail and root SSH by key would be locked out"
+        echo "RESULT: NOT SAFE — add '${NODE_IP} ${NODE}' to /etc/cloud/templates/hosts.debian.tmpl first"; exit 1
+    fi
+else
+    echo "  ✓ node identity: ${NODE} → ${NODE_IP} (/etc/hosts not managed by cloud-init)"
+fi
+
+# -----------------------------------------------------------------------------
 # Simulation against the official repos via a PRIVATE apt configuration
 # -----------------------------------------------------------------------------
 # /var/tmp, not /tmp: on Raspberry Pi OS /tmp is a tmpfs, and the downloaded

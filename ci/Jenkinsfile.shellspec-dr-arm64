@@ -172,15 +172,18 @@ ENDSSH
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 command -v pvesh &>/dev/null || { echo "ERROR: pvesh not found — pxvirt install failed in Step 0"; exit 1; }
-HOSTNAME=\$(hostname)
-grep -qF "192.168.0.252 \${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
-# cloud-init (manage_etc_hosts: true in the template) would rewrite /etc/hosts on the
-# next boot → pmxcfs down → /etc/pve empty → root's authorized_keys dangles (#307).
-echo 'manage_etc_hosts: false' > /etc/cloud/cloud.cfg.d/99-ci-keep-etc-hosts.cfg
-systemctl reset-failed pve-cluster 2>/dev/null || true
-systemctl restart pve-cluster
-sleep 5
-systemctl is-active pve-cluster && echo "pve-cluster: OK" || { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
+# Assert only, do not repair. restore-1 must map the node name to its IP in a way that
+# survives cloud-init's manage_etc_hosts (Pi Imager seed). Earlier this stage patched
+# /etc/hosts itself, which hid a real DR bug (#307).
+# CI instrumentation: a second authorized_keys outside /etc/pve, so a broken pve-cluster
+# after a later reboot stays diagnosable instead of locking Jenkins out (#307/#309).
+cat /root/.ssh/authorized_keys > /etc/ssh/ci_authorized_keys && chmod 600 /etc/ssh/ci_authorized_keys
+echo 'AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/ci_authorized_keys' > /etc/ssh/sshd_config.d/99-ci-fallback-keys.conf
+sshd -t && systemctl reload ssh
+for i in \$(seq 1 18); do systemctl is-active -q pve-cluster && break; sleep 5; done
+if systemctl is-active -q pve-cluster; then echo "pve-cluster: OK"; else
+    echo "ERROR: pve-cluster not active after reboot"; cat /etc/hosts; journalctl -u pve-cluster -n 20 --no-pager; exit 1
+fi
 ENDSSH
                 """
             }

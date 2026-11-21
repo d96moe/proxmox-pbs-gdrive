@@ -177,16 +177,19 @@ ENDSSH
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 command -v pvesh &>/dev/null || { echo "ERROR: pvesh not found — pxvirt install failed in Step 0"; exit 1; }
-HOSTNAME=\$(hostname)
-grep -qF "192.168.0.252 \${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
-# The Pi OS template seeds cloud-init with manage_etc_hosts: true, which rewrites
-# /etc/hosts on every boot → pmxcfs can't resolve the node → /etc/pve stays empty
-# → root's authorized_keys (symlink into /etc/pve/priv) dangles → SSH denied (#307).
-echo 'manage_etc_hosts: false' > /etc/cloud/cloud.cfg.d/99-ci-keep-etc-hosts.cfg
-systemctl reset-failed pve-cluster 2>/dev/null || true
-systemctl restart pve-cluster
-sleep 5
-systemctl is-active pve-cluster && echo "pve-cluster: OK" || { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
+# Assert only, do not repair. restore-1 must map the node name to its IP in a way that
+# survives cloud-init's manage_etc_hosts (Pi Imager seed). Earlier this stage patched
+# /etc/hosts itself, which hid a real DR bug (#307).
+# CI instrumentation: a second authorized_keys outside /etc/pve. If pve-cluster breaks
+# after a later reboot, Jenkins can still log in and the assertions print diagnostics,
+# instead of the VM looking "gone" (#307/#309).
+cat /root/.ssh/authorized_keys > /etc/ssh/ci_authorized_keys && chmod 600 /etc/ssh/ci_authorized_keys
+echo 'AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/ci_authorized_keys' > /etc/ssh/sshd_config.d/99-ci-fallback-keys.conf
+sshd -t && systemctl reload ssh
+for i in \$(seq 1 18); do systemctl is-active -q pve-cluster && break; sleep 5; done
+if systemctl is-active -q pve-cluster; then echo "pve-cluster: OK"; else
+    echo "ERROR: pve-cluster not active after reboot"; cat /etc/hosts; journalctl -u pve-cluster -n 20 --no-pager; exit 1
+fi
 ENDSSH
                 """
             }
@@ -388,11 +391,23 @@ ENDSSH
                         if [ -n "\${NEW_BOOT}" ] && [ "\${NEW_BOOT}" != "\${OLD_BOOT}" ]; then
                             echo "VM back after the migration reboot (new boot_id, ~\$((i*10))s)"; break
                         fi
-                        [ "\$i" -eq 60 ] && { echo "ERROR: VM did not come back after the migration reboot (10 min)"; exit 1; }
+                        if [ "\$i" -eq 60 ]; then
+                            if ssh-keyscan -T 5 ${VM_IP} 2>/dev/null | grep -q .; then
+                                echo "ERROR: sshd answers after the migration reboot but the key login fails (pve-cluster down → /etc/pve/priv/authorized_keys missing?)"
+                            else
+                                echo "ERROR: VM did not come back after the migration reboot (no sshd on ${VM_IP} within 10 min)"
+                            fi
+                            exit 1
+                        fi
                     done
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
-systemctl reset-failed pve-cluster 2>/dev/null || true
-for i in \$(seq 1 12); do systemctl is-active -q pve-cluster && break; systemctl restart pve-cluster; sleep 5; done
+# Assert only, no restarts: a pve-cluster that needs restarting after a reboot is a bug.
+for i in \$(seq 1 18); do systemctl is-active -q pve-cluster && break; sleep 5; done
+if ! systemctl is-active -q pve-cluster; then
+    echo "ERROR: pve-cluster not active after the migration reboot"
+    hostname; grep -v '^#' /etc/hosts; ls -l /root/.ssh/authorized_keys
+    journalctl -b -u pve-cluster -n 20 --no-pager; exit 1
+fi
 for i in \$(seq 1 24); do pct status 100 | grep -q running && break; sleep 5; done
 pveversion | head -1; pct status 100
 ENDSSH

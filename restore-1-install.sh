@@ -284,8 +284,26 @@ if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
 
     # Set hostname
     hostnamectl set-hostname "${PVE_HOSTNAME}"
-    sed -i '/^127\.0\.1\.1/d' /etc/hosts
-    echo "127.0.1.1 ${PVE_HOSTNAME}.local ${PVE_HOSTNAME}" >> /etc/hosts
+    # pmxcfs (pve-cluster) needs the node name to resolve to the node's real, non-loopback
+    # IP. With 127.0.1.1, /etc/pve stays empty after the reboot. Drop the 127.0.1.1 line
+    # and any old entries for this name, then map it to PVE_IP.
+    PVE_IP_ADDR="${PVE_IP%%/*}"
+    awk -v h="${PVE_HOSTNAME}" '
+        $1 == "127.0.1.1" { next }
+        { for (i = 2; i <= NF; i++) if ($i == h || $i == h ".local") next }
+        { print }' /etc/hosts > /etc/hosts.restore-1.tmp
+    echo "${PVE_IP_ADDR} ${PVE_HOSTNAME}.local ${PVE_HOSTNAME}" >> /etc/hosts.restore-1.tmp
+    cat /etc/hosts.restore-1.tmp > /etc/hosts && rm -f /etc/hosts.restore-1.tmp
+    # From here on PVE owns the node's identity and network. Raspberry Pi OS runs
+    # cloud-init on EVERY boot (Imager seed). With manage_etc_hosts: true it re-renders
+    # /etc/hosts and wipes the entry above, so pve-cluster fails and root's
+    # authorized_keys (a symlink into /etc/pve/priv) stops working (CI #307/#309).
+    # A cloud.cfg.d drop-in is not enough: the seed's user-data overrides it. cloud-init
+    # already did its only job (user + SSH key on first boot), so switch it off entirely.
+    if command -v cloud-init &>/dev/null; then
+        touch /etc/cloud/cloud-init.disabled
+        echo "  cloud-init disabled (PVE now owns hostname, /etc/hosts and network)"
+    fi
 
     # Set root password (required for headless DR access via SSH or console)
     if [ -n "${ROOT_PASSWORD:-}" ]; then
@@ -481,8 +499,10 @@ if awk 'NR>1 {print $1}' /proc/swaps | grep -qx "$(readlink -f "${PBS_PARTITION}
 fi
 
 # Check that PBS_PARTITION is not the root partition
+# Compare canonical paths: an LV has several names (/dev/pve/x, /dev/mapper/pve-x, /dev/dm-N)
+PBS_DEV_REAL="$(readlink -f "${PBS_PARTITION}")"
 ROOT_DEV="$(df / | awk 'NR==2 {print $1}')"
-if [ "${PBS_PARTITION}" = "${ROOT_DEV}" ]; then
+if [ "${PBS_DEV_REAL}" = "$(readlink -f "${ROOT_DEV}")" ]; then
     echo "ERROR: ${PBS_PARTITION} is the root partition!"
     echo "  PBS must be on a dedicated partition, not the OS partition."
     exit 1
@@ -491,7 +511,7 @@ fi
 # Check PBS_DATASTORE_PATH is not already mounted by something else
 if mount | grep -q " on ${PBS_DATASTORE_PATH} "; then
     MOUNTED_DEV="$(mount | grep " on ${PBS_DATASTORE_PATH} " | awk '{print $1}')"
-    if [ "${MOUNTED_DEV}" != "${PBS_PARTITION}" ]; then
+    if [ "$(readlink -f "${MOUNTED_DEV}")" != "${PBS_DEV_REAL}" ]; then
         echo "ERROR: ${PBS_DATASTORE_PATH} is already mounted by ${MOUNTED_DEV}, not ${PBS_PARTITION}."
         echo "  Unmount it first or change PBS_DATASTORE_PATH in config.env"
         exit 1
@@ -501,9 +521,10 @@ fi
 # Check PBS partition size is at least 15% of total disk
 PBS_SIZE_BYTES="$(lsblk -bno SIZE "${PBS_PARTITION}" 2>/dev/null | head -1)"
 PBS_SIZE_GB=$(( PBS_SIZE_BYTES / 1024 / 1024 / 1024 ))
-PBS_DISK="$(lsblk -no pkname "${PBS_PARTITION}" 2>/dev/null | head -1)"
-# If PBS_PARTITION is a whole disk (not a partition), pkname is empty — use the disk itself
-[ -z "${PBS_DISK}" ] && PBS_DISK="$(basename "${PBS_PARTITION}")"
+# Physical disk underneath: walk the dependency tree (partition → disk, LV → thin pool →
+# PV partition → disk, LUKS → partition → disk) and take the first TYPE=disk entry.
+PBS_DISK="$(lsblk -snlo NAME,TYPE "${PBS_DEV_REAL}" 2>/dev/null | awk '$2=="disk"{print $1; exit}')"
+[ -z "${PBS_DISK}" ] && PBS_DISK="$(basename "${PBS_DEV_REAL}")"
 DISK_SIZE_BYTES="$(lsblk -bno SIZE "/dev/${PBS_DISK}" 2>/dev/null | head -1)"
 DISK_SIZE_GB=$(( DISK_SIZE_BYTES / 1024 / 1024 / 1024 ))
 REQUIRED_GB=$(( DISK_SIZE_GB * 15 / 100 ))

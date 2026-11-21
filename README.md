@@ -124,14 +124,14 @@ backup-pve-config.sh (nightly at 04:00)
 | <img src="https://cdn.simpleicons.org/rclone" height="20"> rclone | 1.73.1 | 1.73.2 | [rclone.org](https://rclone.org/) |
 | <img src="https://restic.net/apple-touch-icon-144-precomposed.png" height="20"> restic | 0.18.0 | 0.18.0 | [restic.net](https://restic.net/) |
 | <img src="https://creativeprojects.github.io/resticprofile/images/logo.png" height="20"> resticprofile | — | — | [creativeprojects.github.io](https://creativeprojects.github.io/resticprofile/) |
-| <img src="https://www.debian.org/logos/openlogo-nd-100.png" height="20"> Debian (base) | included via PVE installer | Trixie (manual install before PVE) | [debian.org](https://www.debian.org/) |
+| <img src="https://www.debian.org/logos/openlogo-nd-100.png" height="20"> Debian (base) | included via PVE installer | Raspberry Pi OS Lite 64-bit (Trixie), installed before PVE | [debian.org](https://www.debian.org/) · [Raspberry Pi OS](https://www.raspberrypi.com/software/operating-systems/) |
 | <img src="https://www.raspberrypi.com/app/uploads/2022/02/COLOUR-Raspberry-Pi-Symbol-Registered.png" height="20"> Hardware | Any x86_64 with NVMe | Pi 5 8GB + NVMe (tested via USB adapter) | [Raspberry Pi 5](https://www.raspberrypi.com/products/raspberry-pi-5/) |
 
 > **Why Proxmox on a Pi 5?** The specific use case here is a small remote location with minimal IT infrastructure: running **Home Assistant** and a full **Unifi OS** instance side by side. Unifi OS is needed specifically for site-to-site VPN ("site magic") — this is not supported by the Unifi Network add-on in Home Assistant and requires a real Unifi OS server. A Pi 5 running Proxmox VE covers both on a single low-power device: HA and Unifi OS each get their own LXC/VM, no separate hardware needed.
 
 > ⚠️ **Do NOT run this from an SD card.** Proxmox VE's write patterns (journals, VM disk I/O, PBS chunk store) will destroy an SD card quickly. You need an SSD. The setup this repo was built on uses a Pi 5 booting from an NVMe drive connected via USB adapter — cheap and works well.
 
-> ⚠️ **ARM64 only:** pipbs and pxvirt are community projects, not officially supported by Proxmox. They must have compatible API versions — a mismatch can cause GUI rendering issues and other instability. `restore-1-install.sh` checks versions from both repos **before installing anything** and automatically pins whichever package is ahead to a matching older version if needed. Before running `apt upgrade`, always verify both repos are at the same API version first:
+> ⚠️ **ARM64 only:** PBS on arm64 always comes from pipbs, a community project. PVE comes either from pxvirt (community, the default) or from Proxmox's official arm64 repo (see below). With pxvirt, the two must have compatible API versions — a mismatch can cause GUI rendering issues and other instability. `restore-1-install.sh` checks versions from both repos **before installing anything** and automatically pins whichever package is ahead to a matching older version if needed. Before running `apt upgrade`, always verify both repos are at the same API version first:
 > ```bash
 > apt-cache policy proxmox-ve proxmox-backup-server | grep -A1 "Candidate:"
 > dpkg -l proxmox-ve proxmox-backup-server | awk '/^ii/{print $2, $3}'
@@ -159,7 +159,7 @@ backup-pve-config.sh (nightly at 04:00)
 > 4. `full-upgrade`, keeping existing config files;
 > 5. verify PVE is 9.2+ and `/etc/network/interfaces` is unchanged.
 >
-> It refuses to run remotely, because the upgrade replaces the network stack. The whole path is tested in CI first (`MIGRATE_TO_OFFICIAL=true` on the arm64 backup pipeline).
+> It refuses to run remotely, because the upgrade replaces the network stack. It also refuses, already in the dry run, if the node name doesn't resolve to a local non-loopback IP that survives a reboot. On Raspberry Pi OS, cloud-init rewrites `/etc/hosts` from `/etc/cloud/templates/hosts.debian.tmpl` on every boot, so the entry must be in that template, unless cloud-init is disabled. Without it, pve-cluster fails after the reboot, and root's key login, which lives in `/etc/pve`, stops working. The whole path is tested in CI first (`MIGRATE_TO_OFFICIAL=true` on the arm64 backup pipeline).
 >
 > **Bluetooth** must keep working. The Pi 5 BT firmware ships in `bluez-firmware`, which official PVE's `pve-firmware` does not replace. The dry run refuses to continue if `bluez`, `bluez-firmware`, or the package owning the currently loaded BT firmware would be removed. After the reboot, run `--post-check` while still on site. It verifies PVE 9.2+, the Raspberry Pi kernel, pve-cluster, PBS, the network config and default route, that all previously running guests run again, and that `hci0` is UP with the same BT firmware loaded.
 >
@@ -207,7 +207,7 @@ All configuration lives in `config.env`. Copy the template for your platform and
 
 | Variable | Default | Description |
 |---|---|---|
-| `PBS_PARTITION` | — | **Required.** Dedicated partition for PBS, e.g. `/dev/sda3` or `/dev/nvme0n1p4`. Must not be shared with OS or VMs. |
+| `PBS_PARTITION` | — | **Required.** Dedicated block device for PBS: a partition (`/dev/sda3`, `/dev/nvme0n1p4`), an LV (`/dev/pve/pbs-datastore`), a whole disk or an opened LUKS device. It must not be the root filesystem or a VM disk. Loop, zram, optical and swap devices are rejected. |
 | `PBS_DATASTORE_NAME` | `local-store` | PBS datastore name (shown in GUI and used in API calls). |
 | `PBS_DATASTORE_PATH` | `/mnt/pbs` | Mount point for the PBS partition. |
 
@@ -303,35 +303,50 @@ nano config.env
 
 **aarch64 (Raspberry Pi 5):**
 
-Proxmox is not officially supported on ARM64. `restore-1-install.sh` handles the full install automatically:
+There is no Proxmox installer image for the Pi. You install Raspberry Pi OS first, and `restore-1-install.sh` installs Proxmox VE on top of it. Since PVE 9.2 Proxmox publishes an official arm64 PVE repo, but there is still no official arm64 PBS.
 
-1. Install Debian Trixie (64-bit) with Raspberry Pi Imager
-2. SSH in as root, then:
+1. Flash **Raspberry Pi OS Lite (64-bit)** to the SSD with Raspberry Pi Imager, with SSH enabled. Use the Lite image, not Desktop. This is the base the CI tests run against.
+2. SSH in as the user you created in Imager, become root (`sudo -i`), then:
 
 ```bash
 apt-get install -y git
 git clone https://github.com/d96moe/proxmox-pbs-gdrive.git
 cd proxmox-pbs-gdrive
 cp config_rpi5.env config.env
-nano config.env   # set PVE_HOSTNAME, PVE_IP, PVE_GATEWAY, PVE_IFACE, PBS_PARTITION
+nano config.env   # set PVE_HOSTNAME, PVE_IP, PVE_GATEWAY, PVE_IFACE, PBS_PARTITION, PVE_ARM64_SOURCE
 ./restore-1-install.sh
 ```
 
-The script sets hostname, configures the network bridge, adds the pxvirt repo, installs Proxmox VE, switches to the 4k kernel (required for PBS on Pi5), and reboots. Run it again after reboot to complete the install. GUI available at `https://<IP>:8006`.
+`PVE_ARM64_SOURCE` selects where PVE comes from: `pxvirt` (default) or `official`.
 
-> ⚠️ Do NOT run `apt upgrade` without checking for pxvirt/pipbs version conflicts first.
+The script sets hostname, configures the network bridge, adds the selected PVE repo, installs Proxmox VE, switches to the 4k kernel (required for PBS on Pi5), and reboots. Run it again after reboot to complete the install. GUI available at `https://<IP>:8006`.
+
+> ⚠️ Do NOT run `apt upgrade` without checking for PVE/pipbs version conflicts first (see the ARM64 notes under [Supported Platforms](#supported-platforms)).
 
 Fill in `config.env` — see [Configuration Reference](#configuration-reference) above. At minimum set `PBS_PARTITION`, `PBS_USER_PASSWORD`, `RESTICPROFILE_GDRIVE_REMOTE`, `RESTICPROFILE_GDRIVE_PATH`, and `GDRIVE_CONFIG_FOLDER`.
 
-### Step 2: Create PBS partition
+### Step 2: Create the PBS device
 
-PBS needs its own dedicated partition — if anything else fills the disk, backups fail. Size depends on your VMs/LXCs; PBS deduplicates aggressively so the datastore is often much smaller than the sum of VM sizes, but leave headroom.
+PBS needs its own block device: a partition or an LV. Size depends on your VMs/LXCs. PBS deduplicates aggressively, so the datastore is often much smaller than the sum of the VM sizes, but leave headroom.
 
-**The script does not create the partition** — you must do this manually before running `restore-1-install.sh`:
+**The script does not create the device.** Create it yourself before running `restore-1-install.sh`, then set `PBS_PARTITION` to it. In a disaster recovery, create it the same way and at least as large as before. The datastore contents come back from Google Drive later (DR Step 5).
+
+**Option A: LV in the PVE thin pool (x86_64, default PVE installer layout).** The PVE installer creates VG `pve` with the thin pool `data`, which takes nearly the whole disk, so there is no room left for a partition. Carve the datastore out of the pool instead:
+
+```bash
+lvcreate -V 350G -T pve/data -n pbs-datastore
+mkfs.ext4 -m 0 /dev/pve/pbs-datastore
+# config.env: PBS_PARTITION="/dev/pve/pbs-datastore"
+```
+
+A thin LV shares free space with the VM disks. If the pool is overcommitted and runs full, both the VMs and PBS stop writing. Watch `Data%` in `lvs pve/data`.
+
+**Option B: dedicated partition (e.g. a Raspberry Pi 5 with free space on its SSD):**
 
 ```bash
 parted /dev/sda mkpart primary ext4 <start>s <end>s
 mkfs.ext4 -m 0 /dev/sda3
+# config.env: PBS_PARTITION="/dev/sda3"
 ```
 
 > ⚠️ Use the **default inode ratio** — do NOT use `-T largefile4`. PBS stores millions of small 64 KB chunk files and will exhaust inodes with large-file tuning.
