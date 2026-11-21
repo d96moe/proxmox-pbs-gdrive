@@ -467,8 +467,9 @@ fi
 # Pi OS puts its swap on a loop device (rpi-swap), and zram is "disk"-like.
 PBS_DEV_TYPE="$(lsblk -dno TYPE "${PBS_PARTITION}" 2>/dev/null | head -1)"
 case "${PBS_DEV_TYPE}" in
-    disk|part) ;;
-    *) echo "ERROR: ${PBS_PARTITION} is a '${PBS_DEV_TYPE:-unknown}' device, not a disk or partition."; exit 1 ;;
+    # lvm: the home x86 node keeps PBS on an LV in its thin pool (pve/pbs-datastore)
+    disk|part|lvm|crypt) ;;
+    *) echo "ERROR: ${PBS_PARTITION} is a '${PBS_DEV_TYPE:-unknown}' device, not a disk, partition or LV."; exit 1 ;;
 esac
 case "$(basename "${PBS_PARTITION}")" in
     zram*|loop*|sr*) echo "ERROR: ${PBS_PARTITION} is a zram/loop/optical device — refusing to use it for PBS."; exit 1 ;;
