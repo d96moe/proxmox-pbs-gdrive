@@ -179,6 +179,10 @@ ENDSSH
 command -v pvesh &>/dev/null || { echo "ERROR: pvesh not found — pxvirt install failed in Step 0"; exit 1; }
 HOSTNAME=\$(hostname)
 grep -qF "192.168.0.252 \${HOSTNAME}" /etc/hosts || echo "192.168.0.252 \${HOSTNAME}" >> /etc/hosts
+# The Pi OS template seeds cloud-init with manage_etc_hosts: true, which rewrites
+# /etc/hosts on every boot → pmxcfs can't resolve the node → /etc/pve stays empty
+# → root's authorized_keys (symlink into /etc/pve/priv) dangles → SSH denied (#307).
+echo 'manage_etc_hosts: false' > /etc/cloud/cloud.cfg.d/99-ci-keep-etc-hosts.cfg
 systemctl reset-failed pve-cluster 2>/dev/null || true
 systemctl restart pve-cluster
 sleep 5
