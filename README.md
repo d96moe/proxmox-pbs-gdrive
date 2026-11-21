@@ -161,6 +161,8 @@ backup-pve-config.sh (nightly at 04:00)
 >
 > It refuses to run remotely, because the upgrade replaces the network stack. The whole path is tested in CI first (`MIGRATE_TO_OFFICIAL=true` on the arm64 backup pipeline).
 >
+> **Bluetooth** must keep working. The Pi 5 BT firmware ships in `bluez-firmware`, which official PVE's `pve-firmware` does not replace. The dry run refuses to continue if `bluez`, `bluez-firmware`, or the package owning the currently loaded BT firmware would be removed. After the reboot, run `--post-check` while still on site. It verifies PVE 9.2+, the Raspberry Pi kernel, pve-cluster, PBS, the network config and default route, that all previously running guests run again, and that `hci0` is UP with the same BT firmware loaded.
+>
 > On an existing ARM64 host, run the same dry-run before upgrading PBS:
 > ```bash
 > apt-get -s install proxmox-backup-server | grep '^Remv'   # must print nothing

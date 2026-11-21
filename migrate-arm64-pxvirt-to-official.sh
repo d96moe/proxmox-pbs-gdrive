@@ -37,6 +37,7 @@ MODE="dry-run"; ON_SITE=0
 for arg in "$@"; do
     case "${arg}" in
         --apply)   MODE="apply" ;;
+        --post-check) MODE="post-check" ;;
         --on-site) ON_SITE=1 ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "ERROR: unknown argument ${arg}"; exit 64 ;;
@@ -47,6 +48,31 @@ PVE_REMOVE_RE='^Remv (proxmox-ve|pve-manager|qemu-server|pve-container|pve-clust
 RELEASABLE_HOLDS="proxmox-widget-toolkit proxmox-backup-server proxmox-backup-docs"
 
 [ "$(dpkg --print-architecture)" = "arm64" ] || { echo "ERROR: not an arm64 host"; exit 1; }
+
+# -----------------------------------------------------------------------------
+# --post-check: run after the reboot, ON SITE, before leaving
+# -----------------------------------------------------------------------------
+if [ "${MODE}" = "post-check" ]; then
+    BK="$(ls -d /root/pre-migrate-* 2>/dev/null | tail -1)"
+    [ -n "${BK}" ] || { echo "ERROR: no /root/pre-migrate-* backup dir — was --apply run?"; exit 1; }
+    FAIL=0
+    chk() { if eval "$2"; then echo "  ✓ $1"; else echo "  ✗ $1"; FAIL=1; fi; }
+    echo "=== Post-migration check (${BK}) ==="
+    chk "pve-manager >= 9.2 ($(dpkg-query -W -f='${Version}' pve-manager))" 'dpkg --compare-versions "$(dpkg-query -W -f="\${Version}" pve-manager)" ge 9.2'
+    chk "running the Raspberry Pi kernel ($(uname -r))" '[[ "$(uname -r)" == *-rpi-* ]]'
+    chk "pve-cluster active" 'systemctl is-active -q pve-cluster'
+    chk "proxmox-backup active" 'systemctl is-active -q proxmox-backup'
+    chk "/etc/network/interfaces unchanged" 'cmp -s "${BK}/interfaces.before" /etc/network/interfaces'
+    chk "default route present" 'ip route show default | grep -q .'
+    chk "all guests that were running are running again" \
+        'diff <(sort "${BK}/guests-running.before") <( { qm list 2>/dev/null; pct list 2>/dev/null; } | awk "\$3==\"running\" || \$2==\"running\" {print \$1}" | sort) >/dev/null'
+    if [ -s "${BK}/bt.before" ]; then
+        chk "Bluetooth adapter hci0 is UP" 'hciconfig hci0 2>/dev/null | grep -q "UP RUNNING"'
+        chk "Bluetooth firmware loaded again ($(cat "${BK}/bt.before"))" "dmesg | grep -qF \"\$(cat '${BK}/bt.before')\""
+    fi
+    [ ${FAIL} -eq 0 ] && { echo "RESULT: migration verified"; exit 0; }
+    echo "RESULT: CHECK FAILED — fix on site, or roll back (golden image from SD + restore from local PBS)"; exit 1
+fi
 command -v pveversion >/dev/null || { echo "ERROR: PVE is not installed here"; exit 1; }
 . /etc/os-release
 CODENAME="${VERSION_CODENAME}"
@@ -65,7 +91,9 @@ fi
 # -----------------------------------------------------------------------------
 # Simulation against the official repos via a PRIVATE apt configuration
 # -----------------------------------------------------------------------------
-SIM="$(mktemp -d /tmp/pxvirt-migrate-sim.XXXXXX)"
+# /var/tmp, not /tmp: on Raspberry Pi OS /tmp is a tmpfs, and the downloaded
+# package indexes (~100 MB) would take RAM away from the running guests.
+SIM="$(mktemp -d /var/tmp/pxvirt-migrate-sim.XXXXXX)"
 trap 'rm -rf "${SIM}"' EXIT
 mkdir -p "${SIM}/parts" "${SIM}/lists/partial" "${SIM}/archives/partial" "${SIM}/r"
 : > "${SIM}/sources.list"
@@ -79,9 +107,25 @@ add_official_pve_repo "${CODENAME}" "${SIM}/r" >/dev/null
 sed "s#Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg#Signed-By: ${SIM}/r/usr/share/keyrings/proxmox-archive-keyring.gpg#" \
     "${SIM}/r/etc/apt/sources.list.d/pve-install-repo.sources" > "${SIM}/parts/pve-install-repo.sources"
 
+# Private copy of the dpkg status with the holds that --apply releases already
+# released — otherwise apt keeps e.g. proxmox-widget-toolkit at its held version
+# and "solves" pve-manager 9.2 (needs widget-toolkit >= 5.2.14) by REMOVING PVE,
+# which is not what --apply does (2026-11-21, cabin dry run).
+awk -v holds=" ${RELEASABLE_HOLDS} " '
+    BEGIN {RS=""; ORS="\n\n"}
+    {
+        if (match($0, /(^|\n)Package: [^\n]+/)) {
+            pkg = substr($0, RSTART, RLENGTH); sub(/.*Package: /, "", pkg)
+            if (index(holds, " " pkg " ")) sub(/Status: hold ok installed/, "Status: install ok installed")
+        }
+        print
+    }' /var/lib/dpkg/status > "${SIM}/status"
+
 APTOPT=(-o "Dir::Etc::sourcelist=${SIM}/sources.list" -o "Dir::Etc::sourceparts=${SIM}/parts"
         -o "Dir::State::lists=${SIM}/lists" -o "Dir::Cache::archives=${SIM}/archives"
-        -o "Dir::Cache::pkgcache=" -o "Dir::Cache::srcpkgcache=" -o "APT::Get::List-Cleanup=0")
+        -o "Dir::State::status=${SIM}/status"
+        -o "Dir::Cache::pkgcache=" -o "Dir::Cache::srcpkgcache=" -o "APT::Get::List-Cleanup=0"
+        -o "APT::Sandbox::User=root")
 
 echo ""
 echo "=== Simulating full-upgrade against the official Proxmox arm64 repo ==="
@@ -96,7 +140,25 @@ if [ ${SIM_RC} -ne 0 ]; then
 fi
 if grep -E "${PVE_REMOVE_RE}" "${SIM}/plan" > "${SIM}/remv-pve"; then
     echo "  ✗ the full-upgrade would REMOVE PVE packages:"; sed 's/^/      /' "${SIM}/remv-pve"
+    echo "  apt's reasoning (simulated install of proxmox-ve + pve-manager):"
+    apt-get "${APTOPT[@]}" -s install proxmox-ve pve-manager 2>&1 | grep -vE '^(Inst|Conf|Reading|Building|Calculating) ' | sed 's/^/      /' | tail -25 || true
     echo "RESULT: NOT SAFE — do not migrate"; exit 1
+fi
+# Bluetooth must keep working (user requirement). The Pi 5 BT patch firmware
+# comes from bluez-firmware, which pve-firmware does not conflict with — guard
+# that: refuse if bluez/bluez-firmware would be removed, or if the BT firmware
+# loaded right now would lose its owning package.
+BT_FW="$(dmesg 2>/dev/null | sed -n "s/.*Bluetooth: hci0: BCM4345C0 '\([^']*\)'.*/\1/p" | tail -1)"
+if grep -E '^Remv (bluez|bluez-firmware) ' "${SIM}/plan"; then
+    echo "  ✗ the full-upgrade would remove the Bluetooth stack/firmware"; echo "RESULT: NOT SAFE — do not migrate"; exit 1
+fi
+if [ -n "${BT_FW}" ]; then
+    BT_PKG="$(dpkg -S "/usr/lib/firmware/${BT_FW}" 2>/dev/null | cut -d: -f1 || true)"
+    if [ -n "${BT_PKG}" ] && grep -qE "^Remv ${BT_PKG} " "${SIM}/plan"; then
+        echo "  ✗ the loaded Bluetooth firmware ${BT_FW} belongs to ${BT_PKG}, which would be REMOVED"
+        echo "RESULT: NOT SAFE — do not migrate"; exit 1
+    fi
+    echo "  ✓ Bluetooth firmware ${BT_FW} (${BT_PKG:-unknown package}) stays installed"
 fi
 printf '  %s upgraded/installed, %s removed\n' "$(grep -c '^Inst ' "${SIM}/plan" || true)" "$(grep -c '^Remv ' "${SIM}/plan" || true)"
 echo "  key packages after migration:"
@@ -153,6 +215,11 @@ echo ""
 echo "=== 1. Backups → ${BK} ==="
 tar -czf "${BK}/etc.tar.gz" /etc/pve /etc/network/interfaces /etc/apt 2>/dev/null
 cp /etc/network/interfaces "${BK}/interfaces.before"
+# state that --post-check compares against after the reboot
+{ qm list 2>/dev/null; pct list 2>/dev/null; } | awk '$3=="running" || $2=="running" {print $1}' > "${BK}/guests-running.before"
+if hciconfig hci0 2>/dev/null | grep -q "UP RUNNING"; then
+    dmesg | sed -n "s/.*Bluetooth: hci0: BCM4345C0 '\([^']*\)'.*/\1/p" | tail -1 > "${BK}/bt.before"
+fi
 PBS_STORE="$(pvesm status --content backup 2>/dev/null | awk 'NR>1 && $2=="pbs" && $3=="active" {print $1; exit}')"
 if [ -z "${PBS_STORE}" ]; then
     echo "ERROR: no active PBS storage for the pre-migration vzdump — refusing to continue"; exit 1
@@ -195,4 +262,5 @@ fi
 grep -rqs 'lierfang\.com' /etc/apt/ && { echo "  ✗ a lierfang source reappeared"; exit 1; }
 echo "  ✓ no pxvirt sources left"
 echo ""
-echo "RESULT: migrated to official Proxmox arm64 PVE. Backups in ${BK}. Reboot now."
+echo "RESULT: migrated to official Proxmox arm64 PVE. Backups in ${BK}."
+echo "  Reboot now, then (still on site): bash $0 --post-check"
