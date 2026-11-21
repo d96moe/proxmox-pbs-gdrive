@@ -83,7 +83,12 @@ pipeline {
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 udevadm settle
 ROOT_DISK=\$(lsblk -ndo PKNAME \$(findmnt -n -o SOURCE /) 2>/dev/null | head -1)
-DATA_DISK=\$(lsblk -nd -o NAME | grep -v "^\${ROOT_DISK}\$" | grep -v "^loop" | head -1)
+# Data disk = scsi1 via its stable by-id name: "first non-root disk" can hit a
+# loop/zram swap device on Raspberry Pi OS, and this stage runs mkfs on it.
+DATA_DEV=\$(readlink -f /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1)
+[ -b "\${DATA_DEV}" ] || { echo "ERROR: scsi1 by-id not found"; ls -l /dev/disk/by-id/; lsblk; exit 1; }
+DATA_DISK=\$(basename "\${DATA_DEV}")
+[ "\${DATA_DISK}" != "\${ROOT_DISK}" ] || { echo "ERROR: scsi1 resolves to the root disk"; exit 1; }
 echo "Root disk: /dev/\${ROOT_DISK}  Data disk: /dev/\${DATA_DISK}"
 [ -z "\${DATA_DISK}" ] && { echo "ERROR: data disk not found"; lsblk; exit 1; }
 systemctl stop mnt-pbs.mount 2>/dev/null || true

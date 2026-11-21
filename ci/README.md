@@ -262,6 +262,8 @@ The disk is built on the **CI builder VM** (see *Where things run*). The PVE hos
 
 *Gotcha:* Pi OS renders netplan through **NetworkManager**, which does not support `match: driver:`. With a driver match, cloud-init's whole init-local stage crashes and neither the IP nor the SSH key is applied; the VM silently falls back to DHCP. The seed therefore names the NIC explicitly (`enp0s18`, which follows from the VM's PCI layout).
 
+*Gotcha 2:* Pi OS keeps its swap file on a **loop device** (`rpi-swap`), and `lsblk` lists `loop0` first. The old "first disk that isn't the root disk" detection picked that 2 GB swap loop as the PBS data disk. The arm64 pipelines and `config_ci_arm64.env` now resolve the data disk through its stable name `/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1`, like x86 does. `restore-1-install.sh` also refuses loop, zram and optical devices, active swap, and a partition without a filesystem UUID. The real configs (`config_rpi5.env`, `config_x86_standard.env`) name their partition explicitly and were never affected.
+
 In test-automation terms this is a virtual-ECU **L3** setup: production base software with only the hardware-specific boot layer abstracted. The boot chain (Pi firmware, Pi kernel, RP1 NIC, NVMe boot) is not covered and needs a manual test on real hardware.
 
 *Smoke test before templating.* The job boots a throwaway clone (VM 9198) and checks that it reached a Pi OS userland, that the swapped kernel is running, the Pi apt source is present, cloud-init finished, network/DNS/apt work and `/boot/firmware` is mounted. Only then does it run `qm template 9003`, so a broken image never becomes the template.

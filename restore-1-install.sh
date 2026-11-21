@@ -456,6 +456,22 @@ if [ ! -b "${PBS_PARTITION}" ]; then
     exit 1
 fi
 
+# Must be a real disk or partition — never a loop/zram/optical device. Raspberry
+# Pi OS puts its swap on a loop device (rpi-swap), and zram is "disk"-like.
+PBS_DEV_TYPE="$(lsblk -dno TYPE "${PBS_PARTITION}" 2>/dev/null | head -1)"
+case "${PBS_DEV_TYPE}" in
+    disk|part) ;;
+    *) echo "ERROR: ${PBS_PARTITION} is a '${PBS_DEV_TYPE:-unknown}' device, not a disk or partition."; exit 1 ;;
+esac
+case "$(basename "${PBS_PARTITION}")" in
+    zram*|loop*|sr*) echo "ERROR: ${PBS_PARTITION} is a zram/loop/optical device — refusing to use it for PBS."; exit 1 ;;
+esac
+# ...and never anything currently in use as swap
+if awk 'NR>1 {print $1}' /proc/swaps | grep -qx "$(readlink -f "${PBS_PARTITION}")"; then
+    echo "ERROR: ${PBS_PARTITION} is an active swap device — refusing to use it for PBS."
+    exit 1
+fi
+
 # Check that PBS_PARTITION is not the root partition
 ROOT_DEV="$(df / | awk 'NR==2 {print $1}')"
 if [ "${PBS_PARTITION}" = "${ROOT_DEV}" ]; then
@@ -703,8 +719,14 @@ resticprofile version
 echo "=== Step 5: Mount PBS partition ==="
 mkdir -p ${PBS_DATASTORE_PATH}
 
-PBS_UUID="$(blkid -s UUID -o value ${PBS_PARTITION})"
-if ! grep -q "${PBS_UUID}" /etc/fstab; then
+PBS_UUID="$(blkid -s UUID -o value ${PBS_PARTITION} || true)"
+# An empty UUID would make the grep below match every line and silently skip
+# the fstab entry (then: "mount: /mnt/pbs: can't find in /etc/fstab").
+if [ -z "${PBS_UUID}" ]; then
+    echo "ERROR: ${PBS_PARTITION} has no filesystem UUID — is it formatted (mkfs.ext4 -m 0 ${PBS_PARTITION})?"
+    exit 1
+fi
+if ! grep -q "UUID=${PBS_UUID}" /etc/fstab; then
     echo "UUID=${PBS_UUID} ${PBS_DATASTORE_PATH} ext4 defaults,noatime 0 0" >> /etc/fstab
     echo "  Added to /etc/fstab: UUID=${PBS_UUID} -> ${PBS_DATASTORE_PATH}"
 fi
