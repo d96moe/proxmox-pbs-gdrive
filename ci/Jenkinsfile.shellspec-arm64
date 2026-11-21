@@ -373,12 +373,18 @@ ENDSSH
                 """
                 echo "Rebooting after the migration, waiting for SSH (max 5 min)..."
                 sh """
+                    # Wait for a NEW boot, not just for SSH: under full emulation the old
+                    # system can still answer SSH for a minute while shutting down
+                    # ("System is going down", build #306).
+                    OLD_BOOT=\$(ssh ${SSH_OPTS} root@${VM_IP} cat /proc/sys/kernel/random/boot_id)
                     ssh ${SSH_OPTS} root@${VM_IP} 'systemctl reboot' || true
-                    sleep 45
-                    for i in \$(seq 1 50); do
-                        ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH back after migration reboot" && break
-                        [ "\$i" -eq 50 ] && { echo "ERROR: VM did not come back after the migration reboot"; exit 1; }
-                        sleep 5
+                    for i in \$(seq 1 60); do
+                        sleep 10
+                        NEW_BOOT=\$(ssh ${SSH_OPTS} root@${VM_IP} cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+                        if [ -n "\${NEW_BOOT}" ] && [ "\${NEW_BOOT}" != "\${OLD_BOOT}" ]; then
+                            echo "VM back after the migration reboot (new boot_id, ~\$((i*10))s)"; break
+                        fi
+                        [ "\$i" -eq 60 ] && { echo "ERROR: VM did not come back after the migration reboot (10 min)"; exit 1; }
                     done
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH'
 systemctl reset-failed pve-cluster 2>/dev/null || true
