@@ -503,7 +503,7 @@ The nightly config tarball contains:
 
 Restoring this tarball on new hardware gives you back rclone auth, the restic password, and the full PVE config — no manual rclone/restic reconfiguration needed.
 
-> ⚠️ **Match your tar and restic snapshot dates.** Pick a config tar and restic snapshot from the **same night**. The tar is named `pve-config-YYYY-MM-DD.tar.gz.enc`. Mixing dates means your PVE config will reference VMs that don't exist in the restored PBS datastore, or vice versa.
+> ℹ️ **Config and snapshot come from the same night, automatically.** `restore-2-auth.sh` pairs the config tarball and the restic snapshot by date. It restores the newest day that has **both**, however old that day is. Mixing dates would leave PVE listing guests that have no backup, or backups of guests it doesn't know. If the newest tarball has no snapshot from that day (or the other way round), the script says so and uses the previous pair. To force a day, use `RESTORE_DATE=YYYY-MM-DD ./restore-2-auth.sh`. If no pair exists, it stops; you have to type `mismatch` to restore anyway.
 
 ### Step 4: Download config tarball
 
@@ -511,7 +511,7 @@ On any machine with a browser:
 
 1. Go to https://drive.google.com
 2. Navigate to `bu/<GDRIVE_CONFIG_FOLDER>/`
-3. Download `pve-config-YYYY-MM-DD.tar.gz.enc` matching the restic snapshot you plan to restore
+3. Download the newest `pve-config-YYYY-MM-DD.tar.gz.enc`. Its date decides which restic snapshot is restored, so pick an older one only if you want an older state.
 
 Copy to the PVE server:
 ```bash
@@ -530,8 +530,8 @@ The script will:
 1. Find the config tar in `/tmp/`
 2. Stop pve-cluster, clear WAL files, extract the tar (restoring `config.db`, rclone auth, restic password), restart pve-cluster
 3. Verify rclone can reach Google Drive
-4. List available restic snapshots and prompt for confirmation
-5. Stop PBS, clear `/mnt/pbs`, restore the PBS datastore from Google Drive
+4. Pick the restic snapshot from the **same date** as the config and show the pair for confirmation. It switches to the newest matching day if needed, and stops if there is none; see the note above.
+5. Stop PBS, clear `/mnt/pbs`, restore that snapshot of the PBS datastore from Google Drive
 
 > ⚠️ Downloading the PBS datastore takes several hours depending on size and connection speed.
 

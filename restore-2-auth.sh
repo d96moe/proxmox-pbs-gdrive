@@ -13,6 +13,11 @@
 #   B) Automated / CI: if no local tar exists and rclone is already configured,
 #      the latest config backup is downloaded from Google Drive automatically.
 #
+# Then (Step 4) the config and the restic snapshot are paired BY DATE: the
+# newest day that has both is restored, however old it is. With Path A the
+# tarball you put in /tmp decides the date. RESTORE_DATE=YYYY-MM-DD forces a day.
+# No pair → CI fails; interactively you must type 'mismatch' to go on.
+#
 # After this script: run restore-3-pve.sh
 # =============================================================================
 
@@ -26,64 +31,48 @@ if [ ! -f "${SCRIPT_DIR}/config.env" ]; then
 fi
 source "${SCRIPT_DIR}/config.env"
 
+# shellcheck source=lib/restore-pair.sh
+. "${SCRIPT_DIR}/lib/restore-pair.sh"
+
 GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}"
+RESTIC_REPO="rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}"
+# RESTORE_DATE=YYYY-MM-DD forces one day (tarball AND snapshot from that date).
+# Without it: the newest date that has BOTH — however old that is.
+RESTORE_DATE="${RESTORE_DATE:-}"
 
-echo "=== Step 1: Restore PVE host config ==="
-
-# --- Path A: local tar already on disk (manual DR: downloaded via browser + scp) ---
-LOCAL_TAR=$(ls /tmp/pve-config-*.tar.gz.enc /tmp/pve-config-*.tar.gz 2>/dev/null | sort -r | head -1 || true)
-
-if [ -n "${LOCAL_TAR}" ]; then
-    echo "Found local config backup: ${LOCAL_TAR}"
-    CONFIG_TAR="${LOCAL_TAR}"
-    DOWNLOADED=false
-else
-    # --- Path B: download from Google Drive (rclone must already be configured) ---
-    echo "No local tar found. Checking Google Drive (${GDRIVE_CONFIG_PATH})..."
-    rclone lsd ${RESTICPROFILE_GDRIVE_REMOTE}:bu
-    echo "rclone OK"
-
-    LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz.enc" 2>/dev/null | sort -r | head -1) || LATEST_CONFIG=""
-    # Fall back to unencrypted for backward compatibility
-    [ -z "${LATEST_CONFIG}" ] && LATEST_CONFIG=$(rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1) || true
-    if [ -z "${LATEST_CONFIG}" ]; then
-        if [ "${CI:-}" = "true" ]; then
-            echo "ERROR: CI mode — expected a config backup in ${GDRIVE_CONFIG_PATH} but none found."
-            echo "Ensure Scenario A (restore-test pipeline) has run at least once first."
-            exit 1
-        fi
-        echo "WARNING: No config backup found in ${GDRIVE_CONFIG_PATH}"
-        echo "Continuing without config restore — configure rclone and restic manually before proceeding."
-        CONFIG_TAR=""
+# decrypt_config_tar <path> — prints the path of the plain .tar.gz
+decrypt_config_tar() {
+    local in="$1" out
+    if [[ "${in}" != *.enc ]]; then echo "${in}"; return 0; fi
+    out="${in%.enc}"
+    echo "Decrypting $(basename "${in}")..." >&2
+    if [ -f "${CONFIG_ENCRYPT_PASSWORD_FILE:-}" ]; then
+        openssl enc -d -aes-256-cbc -pbkdf2 -in "${in}" -out "${out}" \
+            -pass file:"${CONFIG_ENCRYPT_PASSWORD_FILE}"
     else
-        echo "Found on GDrive: ${LATEST_CONFIG}"
-        rclone copy "${GDRIVE_CONFIG_PATH}/${LATEST_CONFIG}" /tmp/
-        CONFIG_TAR="/tmp/${LATEST_CONFIG}"
-        DOWNLOADED=true
+        local _enc_pass
+        read -r -s -p "Config tarball encryption password: " _enc_pass
+        echo >&2
+        printf '%s' "${_enc_pass}" | openssl enc -d -aes-256-cbc -pbkdf2 \
+            -in "${in}" -out "${out}" -pass stdin
+        unset _enc_pass
     fi
-fi
+    rm -f "${in}"
+    echo "${out}"
+}
 
-if [ -n "${CONFIG_TAR}" ]; then
-    # Decrypt if encrypted
-    if [[ "${CONFIG_TAR}" == *.enc ]]; then
-        DECRYPTED="${CONFIG_TAR%.enc}"
-        echo "Decrypting config tarball..."
-        if [ -f "${CONFIG_ENCRYPT_PASSWORD_FILE:-}" ]; then
-            openssl enc -d -aes-256-cbc -pbkdf2 \
-                -in "${CONFIG_TAR}" -out "${DECRYPTED}" \
-                -pass file:"${CONFIG_ENCRYPT_PASSWORD_FILE}"
-        else
-            read -s -p "Config tarball encryption password: " _enc_pass
-            echo
-            printf '%s' "${_enc_pass}" | openssl enc -d -aes-256-cbc -pbkdf2 \
-                -in "${CONFIG_TAR}" -out "${DECRYPTED}" -pass stdin
-            unset _enc_pass
-        fi
-        rm -f "${CONFIG_TAR}"
-        CONFIG_TAR="${DECRYPTED}"
+# extract_config_tar <plain tar.gz> [keep-creds]
+# keep-creds: re-extracting an OLDER tarball to match the snapshot date — keep the
+# rclone token and restic password that are already in place (from the newest
+# tarball), so a later credential change can't lock us out of the repo.
+extract_config_tar() {
+    local tar_file="$1" keep="${2:-}"
+    local excl=(--exclude='./etc/pve' --exclude='etc/pve')
+    if [ "${keep}" = "keep-creds" ]; then
+        excl+=(--exclude='root/.config/rclone' --exclude='./root/.config/rclone'
+               --exclude='etc/resticprofile'   --exclude='./etc/resticprofile')
     fi
-
-    echo "Extracting config..."
+    echo "Extracting config ($(basename "${tar_file}"))..."
     # /etc/pve is a pmxcfs FUSE filesystem — the authoritative data is
     # /var/lib/pve-cluster/config.db; pmxcfs regenerates /etc/pve from it
     # on startup. Stop pve-cluster so the FUSE mount is gone, restore config.db
@@ -94,16 +83,73 @@ if [ -n "${CONFIG_TAR}" ]; then
     # override the restored config.db when pve-cluster restarts.
     rm -f /var/lib/pve-cluster/config.db-wal \
           /var/lib/pve-cluster/config.db-shm 2>/dev/null || true
-    tar -xzf "${CONFIG_TAR}" -C / \
-        --exclude='./etc/pve' \
-        --exclude='etc/pve'
-    [ "${DOWNLOADED:-false}" = "true" ] && rm -f "${CONFIG_TAR}"
+    tar -xzf "${tar_file}" -C / "${excl[@]}"
     echo "Restarting pve-cluster with restored config.db..."
     systemctl start pve-cluster
     sleep 5
     systemctl is-active pve-cluster && echo "pve-cluster: OK" || \
         { journalctl -u pve-cluster -n 10 --no-pager; exit 1; }
-    echo "Config restored! PVE config, rclone auth and restic password are now in place."
+}
+
+# gdrive_tarball_dates — dates of the encrypted tarballs on GDrive, one per line
+gdrive_tarball_dates() {
+    local f
+    rclone lsf "${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz.enc" \
+        | while read -r f; do tarball_date "${f}"; done
+}
+
+echo "=== Step 1: Restore PVE host config (and the credentials inside it) ==="
+# The tarball holds the rclone token and the restic password, so it comes first.
+# Step 4 then checks that a restic snapshot exists for the SAME date and, if
+# not, switches to the newest date that has both.
+
+# --- Path A: local tar already on disk (manual DR: downloaded via browser + scp) ---
+LOCAL_TAR=$(ls /tmp/pve-config-*.tar.gz.enc /tmp/pve-config-*.tar.gz 2>/dev/null | sort -r | awk 'NR==1' || true)
+CONFIG_SOURCE=""
+CONFIG_TAR=""
+TAR_DATE=""
+
+if [ -n "${LOCAL_TAR}" ]; then
+    echo "Found local config backup: ${LOCAL_TAR}"
+    CONFIG_TAR="${LOCAL_TAR}"
+    CONFIG_SOURCE="local"
+else
+    # --- Path B: download from Google Drive (rclone must already be configured) ---
+    echo "No local tar found. Checking Google Drive (${GDRIVE_CONFIG_PATH})..."
+    rclone lsd ${RESTICPROFILE_GDRIVE_REMOTE}:bu >/dev/null
+    echo "rclone OK"
+    if [ -n "${RESTORE_DATE}" ]; then
+        WANT_DATE="${RESTORE_DATE}"
+    else
+        WANT_DATE="$(gdrive_tarball_dates | sort | sed -n '$p')"
+    fi
+    if [ -z "${WANT_DATE}" ]; then
+        if [ "${CI:-}" = "true" ]; then
+            echo "ERROR: CI mode — expected a config backup in ${GDRIVE_CONFIG_PATH} but none found."
+            echo "Ensure Scenario A has run at least once first."
+            exit 1
+        fi
+        echo "WARNING: No encrypted config backup found in ${GDRIVE_CONFIG_PATH}"
+        echo "Continuing without config restore — configure rclone and restic manually before proceeding."
+    else
+        echo "Using from GDrive: pve-config-${WANT_DATE}.tar.gz.enc"
+        rclone copy "${GDRIVE_CONFIG_PATH}/pve-config-${WANT_DATE}.tar.gz.enc" /tmp/
+        CONFIG_TAR="/tmp/pve-config-${WANT_DATE}.tar.gz.enc"
+        [ -f "${CONFIG_TAR}" ] || { echo "ERROR: pve-config-${WANT_DATE}.tar.gz.enc not found on GDrive"; exit 1; }
+        CONFIG_SOURCE="gdrive"
+    fi
+fi
+
+if [ -n "${CONFIG_TAR}" ]; then
+    TAR_DATE="$(tarball_date "${CONFIG_TAR}")"
+    if [ "${CONFIG_SOURCE}" = "local" ] && [ -n "${RESTORE_DATE}" ] && [ "${RESTORE_DATE}" != "${TAR_DATE}" ]; then
+        echo "ERROR: RESTORE_DATE=${RESTORE_DATE} but the local tarball is from ${TAR_DATE} — remove one of them"
+        exit 1
+    fi
+    CONFIG_TAR="$(decrypt_config_tar "${CONFIG_TAR}")"
+    extract_config_tar "${CONFIG_TAR}"
+    [ "${CONFIG_SOURCE}" = "gdrive" ] && rm -f "${CONFIG_TAR}"
+    echo "Config restored (${TAR_DATE}): PVE config, rclone auth and restic password are now in place."
 fi
 
 echo "=== Step 2: Verify rclone access to Google Drive ==="
@@ -118,17 +164,70 @@ if [ ! -f "${RESTIC_PASSWORD_FILE}" ]; then
 fi
 echo "Password file OK"
 
-echo "=== Step 4: List available restic snapshots ==="
+echo "=== Step 4: Pick a config + snapshot pair from the same date ==="
 resticprofile -c /etc/resticprofile/profiles.yaml -n pbs-backup snapshots
 
+# "YYYY-MM-DD <id>" per snapshot, oldest first. The date is the snapshot's own
+# local date — the same rule backup-pve-config.sh uses to prune tarballs.
+SNAP_LINES="$(restic -r "${RESTIC_REPO}" --password-file "${RESTIC_PASSWORD_FILE}" --no-lock \
+    snapshots --json | python3 -c '
+import json, sys
+for s in sorted(json.load(sys.stdin), key=lambda s: s["time"]):
+    print(s["time"][:10], s["short_id"])')"
+[ -n "${SNAP_LINES}" ] || { echo "ERROR: no restic snapshots in ${RESTIC_REPO}"; exit 1; }
+SNAP_DATES="$(awk '{print $1}' <<< "${SNAP_LINES}")"
+NEWEST_SNAP_DATE="$(sed -n '$s/ .*//p' <<< "${SNAP_LINES}")"
+
+PAIR_DATE=""
+if [ -z "${CONFIG_TAR}" ]; then
+    # No config tarball at all (credentials set up by hand): nothing to pair with.
+    PAIR_DATE="${RESTORE_DATE:-${NEWEST_SNAP_DATE}}"
+    echo "No config tarball was restored — using the snapshot from ${PAIR_DATE}"
+else
+    if [ "${CONFIG_SOURCE}" = "local" ]; then
+        TAR_DATES="${TAR_DATE}"      # you chose this tarball; only its date can match
+    else
+        TAR_DATES="$(gdrive_tarball_dates)"
+    fi
+    if PAIR_DATE="$(pick_restore_date "${TAR_DATES}" "${SNAP_DATES}" "${RESTORE_DATE}")"; then
+        if [ "${PAIR_DATE}" != "${TAR_DATE}" ]; then
+            echo ""
+            echo "NOTE: the newest config tarball (${TAR_DATE}) has no restic snapshot from that day."
+            echo "      Switching to the newest date that has both: ${PAIR_DATE}."
+            echo "      (Credentials stay from ${TAR_DATE}; only the PVE config is taken from ${PAIR_DATE}.)"
+            rclone copy "${GDRIVE_CONFIG_PATH}/pve-config-${PAIR_DATE}.tar.gz.enc" /tmp/
+            PAIR_TAR="$(decrypt_config_tar "/tmp/pve-config-${PAIR_DATE}.tar.gz.enc")"
+            extract_config_tar "${PAIR_TAR}" keep-creds
+            rm -f "${PAIR_TAR}"
+        fi
+    else
+        echo ""
+        echo "WARNING: no matching config + snapshot pair (see above)."
+        echo "  Restoring anyway means config.db (${TAR_DATE}) and the PBS datastore"
+        echo "  (newest snapshot: ${NEWEST_SNAP_DATE}) describe different days: some guests"
+        echo "  may have no backup, or backups may exist for guests PVE doesn't know."
+        if [ "${CI:-}" = "true" ]; then
+            echo "ERROR: CI mode — refusing a mismatched restore"
+            exit 1
+        fi
+        read -r -p "Type 'mismatch' to restore the newest snapshot anyway, anything else aborts: " ans
+        [ "${ans}" = "mismatch" ] || { echo "Aborted."; exit 1; }
+        PAIR_DATE="${NEWEST_SNAP_DATE}"
+    fi
+fi
+SNAP_ID="$(snapshot_for_date "${SNAP_LINES}" "${PAIR_DATE}")"
+[ -n "${SNAP_ID}" ] || { echo "ERROR: no restic snapshot dated ${PAIR_DATE}"; exit 1; }
 echo ""
-echo "=== The above shows available snapshots in Google Drive ==="
-echo "=== Identify the snapshot ID you want to restore (usually 'latest') ==="
+if [ -n "${CONFIG_TAR}" ]; then
+    echo "=== Restore pair: config ${PAIR_DATE} + restic snapshot ${SNAP_ID} (${PAIR_DATE}) ==="
+else
+    echo "=== Restore: restic snapshot ${SNAP_ID} (${PAIR_DATE}), no config tarball ==="
+fi
 echo ""
 if [ "${CI:-}" = "true" ]; then
     echo "CI mode: skipping restore confirmation prompt, continuing automatically."
 else
-    read -p "Press Enter to restore LATEST snapshot, or Ctrl+C to abort..."
+    read -r -p "Press Enter to restore snapshot ${SNAP_ID}, or Ctrl+C to abort..."
 fi
 
 echo "=== Step 5: Stop PBS before restore ==="
@@ -149,9 +248,9 @@ rm -rf ${PBS_DATASTORE_PATH}/*
 echo "=== Step 7: Restore from Google Drive ==="
 echo "This will take several hours depending on data size and network speed..."
 restic \
-    -r rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH} \
-    --password-file ${RESTIC_PASSWORD_FILE} \
-    restore latest \
+    -r "${RESTIC_REPO}" \
+    --password-file "${RESTIC_PASSWORD_FILE}" \
+    restore "${SNAP_ID}" \
     --target /
 
 echo ""

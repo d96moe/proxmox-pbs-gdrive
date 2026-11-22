@@ -133,6 +133,19 @@ After the full DR restore pipeline:
 
 *Gotcha:* the DR jobs' "Stage local config tar" step used to pick `pve-config-*.tar.gz`. That matched a stale **unencrypted** `pve-config-2026-03-27.tar.gz` left over from before encryption was introduced; the tarball prune only handles `.enc` files. So until 2026-11-22 every DR run restored a March `config.db`, and never exercised the decryption path in restore-2. The new host-extras specs caught it (#62/#63/#69). The step now takes the newest `.tar.gz.enc` and fails if it is more than 2 days old.
 
+### Restore pairing (`ci/spec/restore_pair_spec.sh`)
+
+The DR jobs also run this unit spec for `lib/restore-pair.sh`, the date pairing that `restore-2-auth.sh` uses to restore a config tarball and a restic snapshot from the **same** day. It covers:
+- the normal case
+- a night where restic failed (the newest tarball has no snapshot)
+- a night where the config backup failed
+- an old pair that is still the newest possible one
+- no pair at all (must fail)
+- a forced `RESTORE_DATE`
+- choosing the newest snapshot of the day
+
+The DR run itself exercises the normal path end to end: the log shows `=== Restore pair: config <date> + restic snapshot <id> ===`.
+
 ### Cleanup: stale restic locks
 
 Each Scenario A job ends with `restic unlock` followed by `forget --keep-last 1 --prune` on its GDrive CI repo. If that fails, the build is marked **UNSTABLE**. It used to end in `|| true`. A run that was aborted on 2026-09-14 left a lock in the arm64 repo. A stale non-exclusive lock doesn't block backup or restore, so every job stayed green, but every prune failed. By 2026-11-21 the repo had 73 snapshots and 3 GiB that should have been pruned. `unlock` without `--remove-all` only removes locks restic itself considers stale: a dead PID on the same host, or a lock not refreshed for 30 minutes. A running restic refreshes its lock every 5 minutes, so it is never affected, even though the cleanup in `post {}` runs after the Jenkins lock is released. One caveat: every arm64 CI VM is called `arm64-ci`, and every x86 one shares a hostname too. restic would therefore treat a live lock from *another* CI VM as stale if that PID doesn't exist locally. That is safe only because a job runs restic exclusively inside its locked `Run` stage. While one job's cleanup runs, the next job can at most be cloning and booting its VM. Keep `unlock` out of anywhere that can overlap another job's `Run`. The production `backup-restic-vms.sh` runs the same `unlock` before its nightly forget.
