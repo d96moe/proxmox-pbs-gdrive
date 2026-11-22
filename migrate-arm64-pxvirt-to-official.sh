@@ -70,6 +70,26 @@ if [ "${MODE}" = "post-check" ]; then
         chk "Bluetooth adapter hci0 is UP" 'hciconfig hci0 2>/dev/null | grep -q "UP RUNNING"'
         chk "Bluetooth firmware loaded again ($(cat "${BK}/bt.before"))" "dmesg | grep -qF \"\$(cat '${BK}/bt.before')\""
     fi
+    if [ -s "${BK}/eeprom-config.before" ]; then
+        # BOOT_ORDER nibbles are read right to left: 1=SD 4=USB 6=NVMe f=restart
+        ROOT_DEV="$(findmnt -no SOURCE /)"
+        case "${ROOT_DEV}" in
+            /dev/nvme*)   ROOT_NIB=6; ROOT_KIND="NVMe" ;;
+            /dev/sd*)     ROOT_NIB=4; ROOT_KIND="USB" ;;
+            /dev/mmcblk*) ROOT_NIB=1; ROOT_KIND="SD" ;;
+            *)            ROOT_NIB="?"; ROOT_KIND="unknown (${ROOT_DEV})" ;;
+        esac
+        BOOT_ORDER_NOW="$(rpi-eeprom-config | sed -n 's/^BOOT_ORDER=0x//p' | tr 'A-F' 'a-f')"
+        chk "bootloader EEPROM config unchanged (BOOT_ORDER=0x${BOOT_ORDER_NOW})" \
+            'cmp -s "${BK}/eeprom-config.before" <(rpi-eeprom-config)'
+        chk "BOOT_ORDER can boot the root disk (${ROOT_KIND}, ${ROOT_DEV})" \
+            '[[ "${ROOT_NIB}" != "?" && "${BOOT_ORDER_NOW}" == *"${ROOT_NIB}"* ]]'
+        EE_TS_NOW="$(vcgencmd bootloader_version | awk '/^timestamp/ {print $2}')"
+        chk "bootloader not older than before ($(date -ud "@${EE_TS_NOW:-0}" +%F))" \
+            '[ "${EE_TS_NOW:-0}" -ge "$(cat "${BK}/eeprom-ts.before")" ]'
+        # Information only: a pending EEPROM update is a separate, deliberate on-site step
+        rpi-eeprom-update 2>/dev/null | awk '/BOOTLOADER:/ {print "  ℹ bootloader " $2 " " $3 " " $4}'
+    fi
     [ ${FAIL} -eq 0 ] && { echo "RESULT: migration verified"; exit 0; }
     echo "RESULT: CHECK FAILED — fix on site, or roll back (golden image from SD + restore from local PBS)"; exit 1
 fi
@@ -251,6 +271,13 @@ cp /etc/network/interfaces "${BK}/interfaces.before"
 { qm list 2>/dev/null; pct list 2>/dev/null; } | awk '$3=="running" || $2=="running" {print $1}' > "${BK}/guests-running.before"
 if hciconfig hci0 2>/dev/null | grep -q "UP RUNNING"; then
     dmesg | sed -n "s/.*Bluetooth: hci0: BCM4345C0 '\([^']*\)'.*/\1/p" | tail -1 > "${BK}/bt.before"
+fi
+# Real Pi only: bootloader EEPROM config + version. The migration must not
+# change what the Pi does at the next COLD boot; a wrong BOOT_ORDER would only
+# show up after a power cut, with nobody on site.
+if grep -qa "Raspberry Pi" /proc/device-tree/model 2>/dev/null && command -v rpi-eeprom-config >/dev/null; then
+    rpi-eeprom-config > "${BK}/eeprom-config.before"
+    vcgencmd bootloader_version | awk '/^timestamp/ {print $2}' > "${BK}/eeprom-ts.before"
 fi
 PBS_STORE="$(pvesm status --content backup 2>/dev/null | awk 'NR>1 && $2=="pbs" && $3=="active" {print $1; exit}')"
 if [ -z "${PBS_STORE}" ]; then
