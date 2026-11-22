@@ -235,9 +235,29 @@ fi
 source "${SCRIPT_DIR}/config.env"
 
 # =============================================================================
-# Step 0 (aarch64 only): Install Proxmox VE if not already present
+# Step 0 (aarch64 only): Install Proxmox VE if not already present, and make
+# this node the configured one (hostname, /etc/hosts, vmbr0, cloud-init off).
+#
+# Two starting points need Step 0:
+#   * plain Raspberry Pi OS — PVE missing: install it AND configure the node
+#   * the golden image (ci/build-golden-image.sh) — PVE, PBS and the tools are
+#     preinstalled but the image is generic: no hostname/IP/bridge for THIS
+#     node yet. Configure the node, skip the package install.
+# A node already configured as config.env describes skips Step 0 entirely, so
+# re-running this script on a working host never rewrites its network.
 # =============================================================================
-if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
+_node_configured() {
+    local ip_addr="${PVE_IP%%/*}"
+    [ "$(hostname)" = "${PVE_HOSTNAME:-}" ] || return 1
+    grep -qE '^\s*iface\s+vmbr0\s+inet\s+static' /etc/network/interfaces 2>/dev/null || return 1
+    grep -qE "^\s*address\s+${ip_addr//./\\.}(/|\s|$)" /etc/network/interfaces 2>/dev/null || return 1
+    grep -qE "^${ip_addr//./\\.}\s.*\b${PVE_HOSTNAME}\b" /etc/hosts || return 1
+    # cloud-init must be off (or absent), or it rewrites /etc/hosts on the next boot
+    ! command -v cloud-init &>/dev/null || [ -e /etc/cloud/cloud-init.disabled ] || return 1
+}
+PVE_PREINSTALLED=0
+command -v pvesh &>/dev/null && PVE_PREINSTALLED=1
+if [ "${ARCH}" = "aarch64" ] && { [ "${PVE_PREINSTALLED}" -eq 0 ] || ! _node_configured; }; then
     # Where PVE comes from on arm64:
     #   pxvirt   — community PVE arm64 port (what the cabin Pi runs today; default)
     #   official — Proxmox's own arm64 build (PVE 9.2+). PBS stays pipbs either
@@ -247,8 +267,23 @@ if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
         pxvirt|official) ;;
         *) echo "ERROR: PVE_ARM64_SOURCE must be 'pxvirt' or 'official' (got '${PVE_ARM64_SOURCE}')"; exit 1 ;;
     esac
-    echo "=== Step 0: Install Proxmox VE (arm64 / ${PVE_ARM64_SOURCE}) ==="
-    echo "  pvesh not found — PVE not yet installed."
+    if [ "${PVE_PREINSTALLED}" -eq 1 ]; then
+        echo "=== Step 0: Configure this node (PVE preinstalled — golden image) ==="
+        # Safety: Step 0 rewrites hostname, /etc/hosts and /etc/network/interfaces.
+        # On the golden image's first boot there are no guests yet. If there ARE,
+        # this is a live node whose config just doesn't match config.env — refuse
+        # instead of rewriting its network.
+        _guests="$( { qm list 2>/dev/null; pct list 2>/dev/null; } | awk 'NR>1 && $1 ~ /^[0-9]+$/' | wc -l)"
+        if [ "${_guests}" -gt 0 ]; then
+            echo "ERROR: PVE is installed and has ${_guests} guest(s), but the node does not match config.env"
+            echo "  (hostname '$(hostname)' vs '${PVE_HOSTNAME}', vmbr0/address/hosts entry for ${PVE_IP})."
+            echo "  Step 0 would rewrite this node's network — refusing. Fix config.env to match the node."
+            exit 1
+        fi
+    else
+        echo "=== Step 0: Install Proxmox VE (arm64 / ${PVE_ARM64_SOURCE}) ==="
+        echo "  pvesh not found — PVE not yet installed."
+    fi
     echo ""
 
     # Validate required config vars
@@ -277,7 +312,11 @@ if [ "${ARCH}" = "aarch64" ] && ! command -v pvesh &>/dev/null; then
     if [ "${CI:-}" = "true" ]; then
         echo "  CI mode: skipping confirmation, continuing automatically."
     else
-        read -p "Press Enter to install Proxmox VE or Ctrl+C to abort..."
+        if [ "${PVE_PREINSTALLED}" -eq 1 ]; then
+            read -p "Press Enter to configure this node (hostname, network, reboot) or Ctrl+C to abort..."
+        else
+            read -p "Press Enter to install Proxmox VE or Ctrl+C to abort..."
+        fi
     fi
 
     export DEBIAN_FRONTEND=noninteractive
@@ -346,6 +385,8 @@ iface vmbr0 inet static
     bridge-fd 0
 EOF
 
+    # --- Package install: only when PVE is not there yet (not on the golden image) ---
+    if [ "${PVE_PREINSTALLED}" -eq 0 ]; then
     apt_get install -y ca-certificates curl gnupg
     PVE_INSTALL_VERSION=""
     if [ "${PVE_ARM64_SOURCE}" = "official" ]; then
@@ -399,6 +440,7 @@ EOF
         echo "  Fixing proxmox-ve's auto-added pxvirt repo entry (wrong mirror/codename)..."
         fix_pxvirt_sources "${VERSION_CODENAME}"
     fi
+    fi  # --- end of package install ---
 
     # Remove enterprise repos (require a subscription, apt update fails with 401):
     # by filename, and any source file pointing at enterprise.proxmox.com (PVE 9
@@ -439,7 +481,11 @@ EOF
 
     PVE_IP_ADDR="${PVE_IP%/*}"
     echo ""
-    echo "=== Proxmox VE installed. Rebooting in 5 seconds... ==="
+    if [ "${PVE_PREINSTALLED}" -eq 1 ]; then
+        echo "=== Node configured (${PVE_HOSTNAME}, ${PVE_IP} on vmbr0). Rebooting in 5 seconds... ==="
+    else
+        echo "=== Proxmox VE installed. Rebooting in 5 seconds... ==="
+    fi
     echo "After reboot, run this script again: ./restore-1-install.sh"
     echo "Proxmox GUI will be at: https://${PVE_IP_ADDR}:8006"
     sleep 5

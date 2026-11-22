@@ -503,6 +503,18 @@ The nightly config tarball contains:
 
 Restoring this tarball on new hardware gives you back rclone auth, the restic password, and the full PVE config — no manual rclone/restic reconfiguration needed.
 
+### Raspberry Pi 5: start from the golden image (optional, faster)
+
+On a Pi, installing PVE, PBS and the tools from scratch takes a long time. CI builds a **golden image** every week. It is the latest Raspberry Pi OS Lite with official Proxmox VE (arm64), pipbs PBS, restic, rclone, resticprofile and this repository (`/opt/proxmox-pbs-gdrive`) already installed. CI publishes it to `bu/golden-image/<date>_<commit>/` in Google Drive **only after a full DR run on it has passed**, and keeps the newest three.
+
+The image is **generic**. It holds software only: no user, SSH key, host keys, machine-id, PVE/PBS keys, hostname/IP or `config.env`. CI fails the build if any of these is found. You add your user and SSH key when you flash it, and everything else comes from your `config.env` and the config backup.
+
+1. Download `golden-<date>.img.xz` (check it against `SHA256SUMS`) and flash it with Raspberry Pi Imager ("Use custom"). In Imager's settings, set a user and your SSH public key.
+2. Boot it and log in with that user, then `sudo -i`.
+3. `cd /opt/proxmox-pbs-gdrive`, copy your `config.env` there, and continue with the normal steps below. `restore-1-install.sh` sees that PVE is already installed. It only configures **this** node (hostname, `/etc/hosts`, vmbr0, cloud-init off) and reboots. Run it once more after the reboot. It refuses to rewrite the network of a node that already has guests.
+
+The image also comes as `rootfs-<date>.tar.zst` and `bootfs-<date>.tar.zst`. These are for a node whose only disk also holds the PBS datastore: you rewrite just the root (and boot) partition and keep the PBS partition.
+
 > ℹ️ **Config and snapshot come from the same night, automatically.** `restore-2-auth.sh` pairs the config tarball and the restic snapshot by date. It restores the newest day that has **both**, however old that day is. Mixing dates would leave PVE listing guests that have no backup, or backups of guests it doesn't know. If the newest tarball has no snapshot from that day (or the other way round), the script says so and uses the previous pair. To force a day, use `RESTORE_DATE=YYYY-MM-DD ./restore-2-auth.sh`. If no pair exists, it stops; you have to type `mismatch` to restore anyway. A tarball's date is the date in its **file name**, which `backup-pve-config.sh` stamps when it makes the backup. The script warns if `config.db` inside the archive is more than a day older or newer, for example after a file was renamed. Two more options: `RESTORE_CONFIG_FOLDER=<folder>` reads tarballs from another `bu/` folder, and `RESTORE_PLAN_ONLY=1` shows which pair would be restored without touching PBS. The plan-only run still extracts the config.
 
 ### Step 4: Download config tarball

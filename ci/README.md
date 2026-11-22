@@ -23,6 +23,7 @@ Jenkins pipelines automatically verify the scripts end-to-end on real Proxmox VM
 | Template refresh (x86) | `proxmox-ci-template-refresh` | `ci/Jenkinsfile.template-refresh` | Sundays ~03:00 | Rebuilds CI template VM 9001 from a fresh Bookworm image |
 | Template refresh (ARM64) | `proxmox-ci-template-refresh-arm64` | `ci/Jenkinsfile.template-refresh-arm64` | Sundays ~04:00 | Rebuilds CI template VM 9002 from a fresh Trixie arm64 image |
 | Dependency check (ARM64, L2) | `proxmox-ci-arm64-deps` | `ci/Jenkinsfile.arm64-deps` | Nightly ~02:00 | Simulates installing pxvirt PVE + pipbs PBS in an arm64 chroot of the latest Pi OS (~2 min). Green = latest of both installs together, yellow = only the PBS fallback works, red = PVE does not resolve |
+| Golden image (ARM64, Pi 5) | `proxmox-ci-golden-image-arm64` | `ci/Jenkinsfile.golden-image-arm64` | Saturdays ~06:00 | Builds the generic golden DR image (Pi OS Lite + official PVE + pipbs PBS + tools), leak-gates it, runs the full arm64 DR on a test copy (template 9004) and publishes it to `gdrive:bu/golden-image/` only if that passes |
 | Template refresh (ARM64, Pi OS) | `proxmox-ci-template-refresh-arm64-pios` | `ci/Jenkinsfile.template-refresh-arm64-pios` | Sundays ~05:00 | Rebuilds VM 9003 from the latest Raspberry Pi OS Lite arm64 (boot layer swapped), smoke-boots a clone, then templates it |
 | Scenario A | `proxmox-ci-backup` | `ci/Jenkinsfile.shellspec` | Nightly ~21:00 | Install + PBS backup + GDrive backup |
 | Scenario B (DR) | `proxmox-ci-dr` | `ci/Jenkinsfile.shellspec-dr` | Sundays ~21:00 | Full DR restore from GDrive |
@@ -353,6 +354,27 @@ PBS comes from pipbs either way, because there is no official PBS arm64 build. O
 6. Run Scenario A plus `ci/spec/migration_spec.sh`. That spec checks PVE 9.2+, no lierfang source, the official repo, no held proxmox packages, the newest PBS (no fallback), `/etc/network/interfaces` unchanged, pve-cluster active, the pre-migration PBS backups still listed, and LXC 100 running.
 
 *Using it.* Both arm64 pipelines take a `TEMPLATE_ID` build parameter. `9003` is the default since 2026-11-21 and is used by the scheduled runs; the first full Pi OS DR run passed 7/7. `9002` is the Debian comparison baseline. Its weekly refresh keeps running until 9003 has proven stable, then it can be retired.
+
+### Golden image (`proxmox-ci-golden-image-arm64`, Saturdays ~06:00 UTC)
+
+`ci/Jenkinsfile.golden-image-arm64` builds the **generic** golden DR image for a Pi 5 and publishes it only if a full DR on it passes:
+
+1. **Build** (`ci/build-golden-image.sh`, on the builder):
+   - Start from the latest Pi OS Lite. Its own Pi boot chain stays untouched; the build checks that `cmdline.txt` and `config.txt` are unchanged.
+   - In a qemu-user chroot, install official PVE + pipbs PBS + restic/rclone/resticprofile, using the same repo code as `restore-1-install.sh` (`lib/arm64-repos.sh`). ZFS DKMS is prebuilt if `proxmox-ve` pulls it in. The repo is copied to `/opt/proxmox-pbs-gdrive`.
+   - The chroot runs in its own UTS namespace with hostname `raspberrypi`, so no package records the builder's name.
+   - Generalize: remove SSH host keys, `/root/.ssh`, `machine-id`, PVE/PBS keys, pmxcfs data, cloud-init state, logs and history.
+2. **Leak gate** (`ci/golden-leak-gate.sh`) fails the build on any of:
+   - forbidden files: host keys, `.ssh` contents, PVE/PBS keys, `config.db`, `config.env`, rclone/restic secrets, cloud-init instances, a non-empty `machine-id`
+   - forbidden content in `etc`, `root`, `home`, `opt`, `srv`, `usr/local`, `var/lib` or `boot`: private keys, SSH public keys, OAuth/API tokens, non-comment private IPs, the builder's hostname/IPs
+   - credentials in the boot seed
+
+   It was tested locally against a clean and a deliberately dirty fixture: no false positives, and all 10 planted leaks caught.
+3. **Test copy → template 9004:** `ci/build-pios-disk.sh` runs with `BASE_IMG=golden.img SKIP_PREP=1 OUT_NAME=golden-test TEMPLATE_ID=9004`. It applies the same boot-layer swap and CI seed as 9003, to a copy only. `ci/setup-arm64-pios-template.sh` takes `TEMPLATE_ID`/`TEMPLATE_NAME`.
+4. **Full DR** = `proxmox-ci-dr-arm64` with `TEMPLATE_ID=9004 PVE_ARM64_SOURCE=official`, and it must be SUCCESS. `restore-1` takes the golden path: PVE is preinstalled, so it configures the node only. Then restore-2/3, the pairing scenarios and Scenario B run.
+5. **Publish** (`ci/publish-golden-image.sh`, on the builder) writes `golden-<date>.img.xz`, `rootfs-`/`bootfs-<date>.tar.zst`, `golden.env` and `SHA256SUMS` to `gdrive:bu/golden-image/<date>_<commit>/`. It verifies the upload with `rclone check` before pruning to the newest 3. Jenkins hands the builder a temporary `rclone.conf` and deletes it in `post`.
+
+Not covered by QEMU: the Pi's own boot chain on real hardware (firmware, EEPROM, rpi kernel). That is the spring hardware test.
 
 ---
 

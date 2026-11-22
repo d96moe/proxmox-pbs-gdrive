@@ -10,12 +10,13 @@
 # clone first and only then runs `qm template 9003`.
 #
 #   DISK_FILE=/var/lib/vz/images/pios-ci-incoming.qcow2 PIOS_DESC="..." bash ci/setup-arm64-pios-template.sh
+#   (golden-image test: TEMPLATE_ID=9004 TEMPLATE_NAME=arm64-golden-test)
 # =============================================================================
 
 set -euo pipefail
 
-TEMPLATE_ID=9003
-TEMPLATE_NAME="arm64-pios-restore-ci"
+TEMPLATE_ID="${TEMPLATE_ID:-9003}"
+TEMPLATE_NAME="${TEMPLATE_NAME:-arm64-pios-restore-ci}"
 STORAGE="local-lvm"
 : "${DISK_FILE:?DISK_FILE must point to the qcow2 built by ci/build-pios-disk.sh}"
 PIOS_DESC="${PIOS_DESC:-Pi OS CI template}"

@@ -1,0 +1,114 @@
+// =============================================================================
+// Jenkinsfile.golden-image-arm64 — weekly GENERIC golden DR image for a Pi 5
+//
+// 1. Build the image on the CI builder (ci/build-golden-image.sh): latest Pi OS
+//    Lite + official PVE + pipbs PBS + backup tools + this repo, generalized,
+//    leak-gated (ci/golden-leak-gate.sh).
+// 2. Derive a QEMU-bootable TEST copy (ci/build-pios-disk.sh with BASE_IMG,
+//    boot layer swapped, CI seed) and import it as template 9004. The golden
+//    image itself is never modified.
+// 3. Run the full arm64 DR on it: proxmox-ci-dr-arm64 with TEMPLATE_ID=9004.
+//    restore-1 must configure the node and skip the installs; restore-2/3 and
+//    every Scenario B / pairing spec must pass.
+// 4. Only then publish to Google Drive bu/golden-image/<date>_<commit>/ and keep
+//    the newest 3 (ci/publish-golden-image.sh).
+//
+// The Pi boot chain itself (firmware, EEPROM, kernel on real hardware) cannot be
+// tested in QEMU — that is the spring hardware test.
+// =============================================================================
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        // build ~1-2 h (ZFS DKMS under qemu-user) + DR ~3 h + publish
+        timeout(time: 480, unit: 'MINUTES')
+    }
+
+    triggers {
+        cron('H 6 * * 6')  // Saturday morning UTC — clear of the Sunday template refreshes and DR runs
+    }
+
+    environment {
+        PVE_HOST     = "192.168.0.200"
+        BUILDER      = "192.168.0.248"
+        GOLDEN_TPL   = "9004"
+        SRC          = "/srv/ci-build/golden-src"
+        INCOMING     = "/var/lib/vz/images/golden-test-incoming.qcow2"
+        SSH_OPTS     = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -i /var/lib/jenkins/.ssh/id_ed25519"
+    }
+
+    stages {
+        stage('Build golden image on builder') {
+            steps {
+                sh '''
+                    COMMIT="$(git rev-parse HEAD)"
+                    ssh $SSH_OPTS root@$BUILDER "rm -rf $SRC && mkdir -p $SRC"
+                    git archive HEAD | ssh $SSH_OPTS root@$BUILDER "tar -x -C $SRC"
+                    ssh $SSH_OPTS root@$BUILDER "SRC_DIR=$SRC GOLDEN_COMMIT=$COMMIT bash $SRC/ci/build-golden-image.sh"
+                '''
+            }
+        }
+
+        stage('Test template from the image (VM 9004)') {
+            steps {
+                sh '''
+                    PUBKEY="$(cat /var/lib/jenkins/.ssh/id_ed25519.pub)"
+                    ssh $SSH_OPTS root@$BUILDER "JENKINS_PUBKEY='$PUBKEY' BASE_IMG=/srv/ci-build/out/golden/golden.img SKIP_PREP=1 OUT_NAME=golden-test TEMPLATE_ID=$GOLDEN_TPL bash $SRC/ci/build-pios-disk.sh"
+                    ssh $SSH_OPTS root@$BUILDER 'cat /srv/ci-build/out/golden-test.qcow2' \
+                        | ssh $SSH_OPTS root@$PVE_HOST "cat > $INCOMING"
+                    ssh $SSH_OPTS root@$BUILDER 'rm -f /srv/ci-build/out/golden-test.qcow2 /srv/ci-build/out/golden-test.env'
+                    eval "$(ssh $SSH_OPTS root@$BUILDER 'cat /srv/ci-build/out/golden/golden.env')"
+                    DESC="Golden image TEST copy: PVE $PVE_VERSION + PBS $PBS_VERSION on $PIOS_VERSION, commit ${GOLDEN_COMMIT:0:7} (boot layer swapped for QEMU)"
+                    ssh $SSH_OPTS root@$PVE_HOST "DISK_FILE=$INCOMING TEMPLATE_ID=$GOLDEN_TPL TEMPLATE_NAME=arm64-golden-test PIOS_DESC='$DESC' bash -s" < ci/setup-arm64-pios-template.sh
+                    ssh $SSH_OPTS root@$PVE_HOST "qm template $GOLDEN_TPL"
+                '''
+            }
+        }
+
+        stage('Full DR on the golden image') {
+            steps {
+                script {
+                    def dr = build job: 'proxmox-ci-dr-arm64', wait: true, propagate: false,
+                        parameters: [
+                            string(name: 'TEMPLATE_ID', value: env.GOLDEN_TPL),
+                            string(name: 'PVE_ARM64_SOURCE', value: 'official'),
+                        ]
+                    echo "DR on the golden image: proxmox-ci-dr-arm64 #${dr.number} = ${dr.result}"
+                    if (dr.result != 'SUCCESS') {
+                        // official PVE + pipbs needs no PBS fallback, so UNSTABLE is unexpected here too
+                        error("DR on the golden image did not pass (#${dr.number}: ${dr.result}) — NOT publishing")
+                    }
+                }
+            }
+        }
+
+        stage('Publish to Google Drive') {
+            steps {
+                sh '''
+                    ssh $SSH_OPTS root@$PVE_HOST 'cat /root/.config/rclone/rclone.conf' \
+                        | ssh $SSH_OPTS root@$BUILDER 'mkdir -p /root/.config/rclone && umask 077 && cat > /root/.config/rclone/rclone.conf'
+                    ssh $SSH_OPTS root@$BUILDER "bash $SRC/ci/publish-golden-image.sh"
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            // the GDrive token never stays on the builder
+            sh '''
+                ssh $SSH_OPTS root@$BUILDER 'rm -f /root/.config/rclone/rclone.conf' || true
+                ssh $SSH_OPTS root@$PVE_HOST "rm -f $INCOMING" || true
+            '''
+        }
+        success {
+            echo "Golden image built, DR-tested on VM ${GOLDEN_TPL} and published to gdrive:bu/golden-image/."
+        }
+        failure {
+            echo "Golden image NOT published — see the failing stage (leak gate, build, or DR on the image)."
+        }
+    }
+}

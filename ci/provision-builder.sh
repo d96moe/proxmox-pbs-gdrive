@@ -24,7 +24,8 @@ apt-get install -y -qq \
     grub-common \
     qemu-user-static binfmt-support debootstrap \
     libguestfs-tools \
-    python3 python3-venv git rsync jq shellcheck
+    python3 python3-venv git rsync jq shellcheck \
+    rclone
 systemctl enable --now qemu-guest-agent
 
 # ShellSpec (same install method as the CI VMs)
