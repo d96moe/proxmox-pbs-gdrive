@@ -171,8 +171,17 @@ ENDSSH
 set -euo pipefail
 source ${SCRIPTS_DIR}/config.env
 GDRIVE_CONFIG_PATH="\${RESTICPROFILE_GDRIVE_REMOTE}:bu/\${GDRIVE_CONFIG_FOLDER}"
-LATEST=\$(rclone lsf "\${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz" 2>/dev/null | sort -r | head -1)
-[ -z "\${LATEST}" ] && { echo "ERROR: no config backup found at \${GDRIVE_CONFIG_PATH}"; exit 1; }
+# Only the encrypted format that backup-pve-config.sh writes today. Matching
+# "*.tar.gz" picked a stale unencrypted 2026-03-27 leftover for months, so every
+# DR run restored a March config instead of Scenario A's fresh backup.
+LATEST=\$(rclone lsf "\${GDRIVE_CONFIG_PATH}/" --include "pve-config-*.tar.gz.enc" | sort -r | awk 'NR==1')
+[ -z "\${LATEST}" ] && { echo "ERROR: no encrypted config backup found at \${GDRIVE_CONFIG_PATH}"; exit 1; }
+LATEST_DATE="\${LATEST#pve-config-}"; LATEST_DATE="\${LATEST_DATE%%.tar.gz.enc}"
+AGE_DAYS=\$(( ( \$(date -u +%s) - \$(date -u -d "\${LATEST_DATE}" +%s) ) / 86400 ))
+if [ "\${AGE_DAYS}" -gt 2 ]; then
+    echo "ERROR: newest config backup is \${LATEST} (\${AGE_DAYS} days old) — run Scenario A first; a DR test on stale data proves nothing"
+    exit 1
+fi
 echo "Downloading \${LATEST} to /tmp/..."
 rclone copy "\${GDRIVE_CONFIG_PATH}/\${LATEST}" /tmp/
 echo "Removing rclone.conf to simulate fresh install (no pre-configured GDrive auth)..."
