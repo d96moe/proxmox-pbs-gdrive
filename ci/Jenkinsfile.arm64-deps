@@ -51,7 +51,10 @@ pipeline {
                     def rc = [:]
                     for (src in ['pxvirt', 'official']) {
                         echo "===== PVE_ARM64_SOURCE=${src} ====="
-                        rc[src] = sh(returnStatus: true, script: "ssh \$SSH_OPTS root@\$BUILDER 'cd \$L2_DIR && PVE_ARM64_SOURCE=${src} bash ci/check-arm64-deps.sh'")
+                        // L2_DIR must expand HERE (double quotes): inside single quotes
+                        // it reached the builder unexpanded, `cd` went to $HOME and the
+                        // check never ran ("No such file", #2) — every run since d6cee0d.
+                        rc[src] = sh(returnStatus: true, script: "ssh \$SSH_OPTS root@\$BUILDER \"cd \$L2_DIR && PVE_ARM64_SOURCE=${src} bash ci/check-arm64-deps.sh\"")
                     }
                     def summary = rc.collect { k, v -> "${k}=" + (v == 0 ? 'green' : v == 3 ? 'yellow (PBS fallback)' : 'RED') }.join(', ')
                     currentBuild.description = summary

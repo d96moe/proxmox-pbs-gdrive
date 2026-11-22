@@ -33,9 +33,12 @@ count_gdrive_restic_snapshots() {
         | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))'
 }
 
+# Today's ENCRYPTED tarball — the one this run's backup-pve-config.sh uploaded.
+# Counting 'pve-config-*.tar.gz' only ever matched a stale unencrypted March
+# leftover; once that was deleted (2026-11-22) the check went red (#272/#312).
 count_gdrive_config_tarballs() {
     rclone lsf "${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}/" \
-        --include 'pve-config-*.tar.gz' 2>/dev/null \
+        --include "pve-config-$(date +%F).tar.gz.enc" 2>/dev/null \
         | wc -l \
         | tr -d ' '
 }
@@ -96,7 +99,7 @@ Describe 'Google Drive restic backup'
 End
 
 Describe 'Google Drive config backup'
-    It 'has at least one config tarball uploaded'
+    It "has today's encrypted config tarball uploaded"
         When call count_gdrive_config_tarballs
         The output should not eq '0'
     End
