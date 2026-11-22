@@ -144,7 +144,23 @@ The DR jobs also run this unit spec for `lib/restore-pair.sh`, the date pairing 
 - a forced `RESTORE_DATE`
 - choosing the newest snapshot of the day
 
-The DR run itself exercises the normal path end to end: the log shows `=== Restore pair: config <date> + restic snapshot <id> ===`.
+**End to end (`ci/spec/restore_pairing_e2e_spec.sh`)** runs in a stage before the real DR. `restore-2-auth.sh` runs with `RESTORE_PLAN_ONLY=1`. It does real GDrive downloads, real decryption, real extraction with pve-cluster restarts, and a real restic snapshot list, then stops before PBS is touched, so each scenario takes seconds.
+
+`ci/pairing-fixture.sh` builds scratch folders `<config folder>_pairtest_{normal,newer,old}` from the newest real tarball D0. The "newer" folder adds a re-packed copy dated D0+1 with markers.
+
+The scenarios:
+- Path B, normal night
+- the newest tarball has no snapshot: it switches back to D0. `profiles.yaml` must keep the newest tarball's marker (credentials kept), and `config.env` must lose its marker (config from D0)
+- no pair, CI: refuses
+- `RESTORE_DATE`, valid and without a snapshot
+- Path A: normal, and a date without a snapshot
+- Path A with `RESTORE_DATE` different from the local tarball
+- interactive `mismatch`, and any other answer, which aborts
+- no password file: the password is read from stdin, and a wrong one fails cleanly
+
+A failing scenario fails the build, but the full DR still runs (`catchError`). The scratch folders are purged after the stage, in `post`, and again at the start of the next setup.
+
+The full DR run then exercises the normal Path A end to end. Its log shows `=== Restore pair: config <date> + restic snapshot <id> ===`.
 
 ### Cleanup: stale restic locks
 

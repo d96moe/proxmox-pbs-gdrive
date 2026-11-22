@@ -236,6 +236,23 @@ ENDSSH
             }
         }
 
+        stage('Restore pairing scenarios (restore-2, plan only)') {
+            steps {
+                echo "restore-2 corner cases end to end (real GDrive/decrypt/extract/restic list, no PBS restore)..."
+                sh "ssh ${SSH_OPTS} root@${VM_IP} 'bash ${SCRIPTS_DIR}/ci/pairing-fixture.sh setup'"
+                // a failing scenario fails the build, but the full DR below still runs
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh """
+                        ssh ${SSH_OPTS} root@${VM_IP} \
+                            'cd ${SCRIPTS_DIR} && /usr/local/bin/shellspec --shell bash --format junit ci/spec/restore_pairing_e2e_spec.sh' \
+                            > shellspec-pairing-arm64.xml
+                    """
+                }
+                // leave nothing behind that the real Path A restore below could pick up
+                sh "ssh ${SSH_OPTS} root@${VM_IP} 'bash ${SCRIPTS_DIR}/ci/pairing-fixture.sh cleanup'"
+            }
+        }
+
         stage('Stage local config tar (simulate manual DR)') {
             steps {
                 echo "Downloading arm64 config tar to /tmp/ then removing rclone.conf..."
@@ -349,6 +366,8 @@ ENDSSH
             junit allowEmptyResults: true, testResults: 'shellspec-*-arm64.xml'
 
             echo "=== Cleanup ==="
+            // pairing scratch folders on GDrive (setup also purges them, so a missed cleanup self-heals)
+            sh "ssh ${SSH_OPTS} root@${VM_IP} 'bash ${SCRIPTS_DIR}/ci/pairing-fixture.sh cleanup' || true"
             sh """
                 ssh ${SSH_OPTS} root@${PVE_HOST} \
                     "qm stop ${VM_ID} 2>/dev/null || true; sleep 5; qm destroy ${VM_ID} --purge 1" \

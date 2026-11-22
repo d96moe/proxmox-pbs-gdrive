@@ -34,11 +34,17 @@ source "${SCRIPT_DIR}/config.env"
 # shellcheck source=lib/restore-pair.sh
 . "${SCRIPT_DIR}/lib/restore-pair.sh"
 
-GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${GDRIVE_CONFIG_FOLDER}"
-RESTIC_REPO="rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}"
-# RESTORE_DATE=YYYY-MM-DD forces one day (tarball AND snapshot from that date).
-# Without it: the newest date that has BOTH — however old that is.
+# Optional environment:
+#   RESTORE_DATE=YYYY-MM-DD   force one day (tarball AND snapshot from that date).
+#                             Without it: the newest date that has BOTH, however old.
+#   RESTORE_CONFIG_FOLDER=x   read config tarballs from bu/x instead of
+#                             GDRIVE_CONFIG_FOLDER (e.g. another host's folder).
+#   RESTORE_PLAN_ONLY=1       run steps 1-4 for real (download, decrypt, extract,
+#                             pair) and stop before PBS is touched; prints a
+#                             'RESTORE_PLAN ...' line. Used by the CI pairing tests.
 RESTORE_DATE="${RESTORE_DATE:-}"
+GDRIVE_CONFIG_PATH="${RESTICPROFILE_GDRIVE_REMOTE}:bu/${RESTORE_CONFIG_FOLDER:-${GDRIVE_CONFIG_FOLDER}}"
+RESTIC_REPO="rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}"
 
 # decrypt_config_tar <path> — prints the path of the plain .tar.gz
 decrypt_config_tar() {
@@ -46,16 +52,24 @@ decrypt_config_tar() {
     if [[ "${in}" != *.enc ]]; then echo "${in}"; return 0; fi
     out="${in%.enc}"
     echo "Decrypting $(basename "${in}")..." >&2
+    # Called inside $(...), where set -e does not apply: check openssl explicitly
+    # and keep the encrypted file if it fails (wrong password → try again).
+    local rc=0
     if [ -f "${CONFIG_ENCRYPT_PASSWORD_FILE:-}" ]; then
         openssl enc -d -aes-256-cbc -pbkdf2 -in "${in}" -out "${out}" \
-            -pass file:"${CONFIG_ENCRYPT_PASSWORD_FILE}"
+            -pass file:"${CONFIG_ENCRYPT_PASSWORD_FILE}" || rc=$?
     else
         local _enc_pass
-        read -r -s -p "Config tarball encryption password: " _enc_pass
+        read -r -s -p "Config tarball encryption password: " _enc_pass || true
         echo >&2
         printf '%s' "${_enc_pass}" | openssl enc -d -aes-256-cbc -pbkdf2 \
-            -in "${in}" -out "${out}" -pass stdin
+            -in "${in}" -out "${out}" -pass stdin || rc=$?
         unset _enc_pass
+    fi
+    if [ "${rc}" -ne 0 ]; then
+        rm -f "${out}"
+        echo "ERROR: could not decrypt $(basename "${in}") (wrong password?)" >&2
+        return 1
     fi
     rm -f "${in}"
     echo "${out}"
@@ -71,6 +85,19 @@ extract_config_tar() {
     if [ "${keep}" = "keep-creds" ]; then
         excl+=(--exclude='root/.config/rclone' --exclude='./root/.config/rclone'
                --exclude='etc/resticprofile'   --exclude='./etc/resticprofile')
+    fi
+    # The pairing goes by the date in the FILE NAME (stamped by backup-pve-config.sh
+    # when it made the tarball). Cross-check it against config.db's own mtime
+    # inside the archive and warn on a mismatch, e.g. a renamed file.
+    local name_date db_date diff_days
+    name_date="$(tarball_date "${tar_file}")"
+    db_date="$(tar -tvzf "${tar_file}" var/lib/pve-cluster/config.db 2>/dev/null | awk 'NR==1 {print $4}' || true)"
+    if [ -n "${db_date}" ] && [ -n "${name_date}" ]; then
+        diff_days=$(( ( $(date -d "${name_date}" +%s) - $(date -d "${db_date}" +%s) ) / 86400 ))
+        if [ "${diff_days#-}" -gt 1 ]; then
+            echo "WARNING: $(basename "${tar_file}") is named ${name_date}, but its config.db is from ${db_date}."
+            echo "         The pairing uses the name; make sure this is the tarball you meant."
+        fi
     fi
     echo "Extracting config ($(basename "${tar_file}"))..."
     # /etc/pve is a pmxcfs FUSE filesystem — the authoritative data is
@@ -179,6 +206,8 @@ SNAP_DATES="$(awk '{print $1}' <<< "${SNAP_LINES}")"
 NEWEST_SNAP_DATE="$(sed -n '$s/ .*//p' <<< "${SNAP_LINES}")"
 
 PAIR_DATE=""
+SWITCHED=0     # 1 = re-extracted an older tarball to match the snapshot date
+MISMATCH=0     # 1 = no pair; the user typed 'mismatch' and goes on regardless
 if [ -z "${CONFIG_TAR}" ]; then
     # No config tarball at all (credentials set up by hand): nothing to pair with.
     PAIR_DATE="${RESTORE_DATE:-${NEWEST_SNAP_DATE}}"
@@ -199,6 +228,7 @@ else
             PAIR_TAR="$(decrypt_config_tar "/tmp/pve-config-${PAIR_DATE}.tar.gz.enc")"
             extract_config_tar "${PAIR_TAR}" keep-creds
             rm -f "${PAIR_TAR}"
+            SWITCHED=1
         fi
     else
         echo ""
@@ -213,6 +243,7 @@ else
         read -r -p "Type 'mismatch' to restore the newest snapshot anyway, anything else aborts: " ans
         [ "${ans}" = "mismatch" ] || { echo "Aborted."; exit 1; }
         PAIR_DATE="${NEWEST_SNAP_DATE}"
+        MISMATCH=1
     fi
 fi
 SNAP_ID="$(snapshot_for_date "${SNAP_LINES}" "${PAIR_DATE}")"
@@ -224,6 +255,11 @@ else
     echo "=== Restore: restic snapshot ${SNAP_ID} (${PAIR_DATE}), no config tarball ==="
 fi
 echo ""
+if [ "${RESTORE_PLAN_ONLY:-}" = "1" ]; then
+    echo "RESTORE_PLAN date=${PAIR_DATE} snapshot=${SNAP_ID} newest_tarball=${TAR_DATE:-none} switched=${SWITCHED} mismatch=${MISMATCH}"
+    echo "RESTORE_PLAN_ONLY=1 — stopping before PBS is touched."
+    exit 0
+fi
 if [ "${CI:-}" = "true" ]; then
     echo "CI mode: skipping restore confirmation prompt, continuing automatically."
 else
