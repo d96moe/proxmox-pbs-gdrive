@@ -15,6 +15,9 @@
 #   - /etc/pve-agent/    PVE agent config (tokens, PBS connection)
 #   - /opt/pve-agent/*.py  PVE agent source (venv excluded — recreatable)
 #   - /etc/systemd/system/pve-agent.service  Systemd unit
+#   - EXTRA_CONFIG_PATHS from config.env: host-specific additions (for example
+#     a reverse proxy, firewall rules, a sysctl drop-in) — restore-3-pve.sh
+#     reinstalls EXTRA_PACKAGES, puts these paths back and starts EXTRA_SERVICES
 #
 # Prunes config tarballs to match restic snapshot dates — so every kept
 # tarball has a corresponding restic snapshot to restore from.
@@ -48,6 +51,18 @@ echo "    Destination: ${GDRIVE_CONFIG_PATH}"
 # backup captures a stale config.db that is missing recent changes.
 sqlite3 /var/lib/pve-cluster/config.db "PRAGMA wal_checkpoint(FULL);" >/dev/null 2>&1 || true
 
+# Host-specific extras (space-separated absolute paths, no spaces inside a path).
+# A configured path that is missing is a config error worth seeing every night,
+# not something to drop silently from the DR set.
+read -ra EXTRA_PATHS <<< "${EXTRA_CONFIG_PATHS:-}"
+for p in "${EXTRA_PATHS[@]}"; do
+    if [ -e "${p}" ] || [ -L "${p}" ]; then
+        echo "    Extra: ${p}"
+    else
+        echo "    WARNING: EXTRA_CONFIG_PATHS entry not found on this host: ${p}"
+    fi
+done
+
 # Create tarball of critical config files
 # /boot/firmware/config.txt is Pi5-specific — harmless to include on x86 (will just be missing)
 tar -czf "${TARBALL}" \
@@ -67,6 +82,7 @@ tar -czf "${TARBALL}" \
     $(find /opt/pve-agent -maxdepth 1 -name '*.py' 2>/dev/null) \
     /etc/systemd/system/pve-agent.service \
     /boot/firmware/config.txt \
+    "${EXTRA_PATHS[@]}" \
     2>/dev/null || true
 
 echo "    Tarball size: $(du -sh ${TARBALL} | cut -f1)"

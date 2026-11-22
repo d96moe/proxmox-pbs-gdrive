@@ -141,6 +141,16 @@ FORGET_ARGS=()
 if [ ${#FORGET_ARGS[@]} -eq 0 ]; then
     echo "WARNING: No retention policy configured — skipping forget/prune"
 else
+    # A restic process that was killed (reboot, OOM, timeout) leaves its lock
+    # behind. A stale non-exclusive lock does not block backup/restore, but it
+    # makes every prune fail. 'unlock' without --remove-all only removes locks
+    # restic itself considers stale (dead PID on this host, or not refreshed for
+    # 30 min) — a live restic refreshes its lock every 5 min and is never touched.
+    echo "--- Removing stale restic locks (if any)..."
+    timeout 10m restic unlock \
+        --password-file "${RESTIC_PASSWORD_FILE}" \
+        --repo "${RESTIC_REPO}" || echo "WARNING: restic unlock failed — forget may hit a stale lock"
+
     echo "--- Running restic forget (timeout 7h): ${FORGET_ARGS[*]}..."
     timeout 7h restic forget --retry-lock 30m \
         --password-file "${RESTIC_PASSWORD_FILE}" \

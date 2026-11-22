@@ -286,14 +286,19 @@ ENDSSH
         always {
             echo "=== Cleanup ==="
 
-            // Prune old GDrive test snapshots (keep last 1 to allow DR pipeline to run)
-            sh """
-                ssh ${SSH_OPTS} root@${VM_IP} \
-                    "restic -r ${GDRIVE_REPO} \
-                            --password-file ${RESTIC_PW} \
-                            forget --keep-last 1 --prune" \
-                    || true
-            """
+            // Prune old GDrive test snapshots (keep last 1 so the DR job has one).
+            // unlock first: an aborted run leaves a stale lock that makes every
+            // later prune fail. A failed prune marks the build UNSTABLE.
+            script {
+                def pruneRc = sh(returnStatus: true, script: """
+                    ssh ${SSH_OPTS} root@${VM_IP} \
+                        "restic -r ${GDRIVE_REPO} --password-file ${RESTIC_PW} unlock && \
+                         restic -r ${GDRIVE_REPO} --password-file ${RESTIC_PW} forget --keep-last 1 --prune"
+                """)
+                if (pruneRc != 0) {
+                    unstable("GDrive CI repo prune failed (rc=${pruneRc}) — the repo grows until this is fixed")
+                }
+            }
 
             // Destroy the cloned VM
             sh """

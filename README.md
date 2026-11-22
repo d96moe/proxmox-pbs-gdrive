@@ -252,6 +252,25 @@ All configuration lives in `config.env`. Copy the template for your platform and
 
 Config tarballs are pruned automatically to match restic snapshot dates — every kept tarball has a corresponding restic snapshot to restore from, and no more.
 
+### Host Extras (optional)
+
+Anything the host needs that PVE/PBS don't bring along — for example a reverse proxy, a firewall/NAT rule, a sysctl drop-in or a small helper service — is lost in a DR unless you list it here. All three are space-separated; leave them empty if the host has none.
+
+| Variable | Default | Description |
+|---|---|---|
+| `EXTRA_PACKAGES` | `""` | apt packages `restore-3-pve.sh` installs. It simulates first and refuses if apt would remove anything. |
+| `EXTRA_CONFIG_PATHS` | `""` | Absolute files/dirs (at least two levels deep, no spaces) that `backup-pve-config.sh` adds to the nightly config tarball. A listed path that is missing gives a WARNING in the backup log. |
+| `EXTRA_SERVICES` | `""` | systemd units `restore-3-pve.sh` enables and restarts last; the restore fails if one is not active. |
+
+```bash
+# Example: nginx reverse proxy + NAT rule + helper service
+EXTRA_PACKAGES="nginx iptables-persistent"
+EXTRA_CONFIG_PATHS="/etc/nginx /etc/iptables /etc/sysctl.d/99-ip-forward.conf /usr/local/bin/my-helper.py /etc/systemd/system/my-helper.service"
+EXTRA_SERVICES="netfilter-persistent my-helper nginx"
+```
+
+On restore the paths are put back **exactly as backed up, after** the packages are installed — so package defaults that the original host didn't have (nginx's `sites-enabled/default` with `default_server` would shadow your own site on port 80) don't come back. The list used is the one in the restored `/etc/proxmox-backup-restore/config.env`, i.e. the one the backup was made with.
+
 ### Backup Schedules
 
 Schedules use systemd calendar format (e.g. `02:00`, `Mon 03:30`). The recommended order ensures each job completes before the next starts:
@@ -480,6 +499,7 @@ The nightly config tarball contains:
 - `/etc/fstab`, network config, custom scripts
 - `/etc/pve-agent/` — PVE agent config (tokens, PBS connection — required if proxmox-backup-gui is deployed)
 - `/opt/pve-agent/*.py` — PVE agent source files (venv excluded, recreatable)
+- every path in `EXTRA_CONFIG_PATHS` (see [Host Extras](#host-extras-optional))
 
 Restoring this tarball on new hardware gives you back rclone auth, the restic password, and the full PVE config — no manual rclone/restic reconfiguration needed.
 
@@ -523,7 +543,7 @@ After this step, all VM/LXC configs are visible in the PVE GUI and the PBS datas
 ./restore-3-pve.sh
 ```
 
-Updates the PBS fingerprint on the storage entry already in `config.db`, starts PBS, and re-enables backup schedules.
+Updates the PBS fingerprint on the storage entry already in `config.db`, starts PBS, and re-enables backup schedules. It also brings back the [host extras](#host-extras-optional): installs `EXTRA_PACKAGES`, puts `EXTRA_CONFIG_PATHS` back exactly as backed up, and enables/restarts `EXTRA_SERVICES`.
 
 ### Step 7: Restore VMs and LXCs
 
@@ -571,10 +591,14 @@ restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH
 # Check PBS datastore disk usage
 df -h /mnt/pbs
 
-# Remove stale restic locks (if a backup crashed mid-run)
+# List locks / remove stale ones (if a backup crashed mid-run)
 restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \
-  --password-file "${RESTIC_PASSWORD_FILE}" unlock --remove-all
+  --password-file "${RESTIC_PASSWORD_FILE}" --no-lock list locks
+restic --repo "rclone:${RESTICPROFILE_GDRIVE_REMOTE}:${RESTICPROFILE_GDRIVE_PATH}" \
+  --password-file "${RESTIC_PASSWORD_FILE}" unlock
 ```
+
+`backup-restic-vms.sh` runs the same `unlock` before every nightly forget/prune. Without `--remove-all`, restic only removes locks it considers stale (dead process on this host, or not refreshed for 30 minutes), so a running backup is never affected. A stale lock doesn't block backup or restore, but it makes every prune fail — so without this the cloud repo would quietly keep growing. Use `--remove-all` only when you are sure no restic process is running anywhere against the repo.
 
 ---
 

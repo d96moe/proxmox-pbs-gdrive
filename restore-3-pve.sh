@@ -141,6 +141,95 @@ TIMEREOF
 systemctl daemon-reload
 systemctl enable --now restic-backup.timer
 
+echo "=== Step 7b: Restore host extras (EXTRA_PACKAGES / EXTRA_CONFIG_PATHS / EXTRA_SERVICES) ==="
+# The authoritative list is the one the backup was made with: restore-2 put the
+# backed-up config.env back at /etc/proxmox-backup-restore/config.env. Only when
+# that file is missing do the values from ${SCRIPT_DIR}/config.env apply.
+RESTORED_ENV="/etc/proxmox-backup-restore/config.env"
+if [ -f "${RESTORED_ENV}" ]; then
+    eval "$(set +eu; source "${RESTORED_ENV}" >/dev/null 2>&1
+            printf 'EXTRA_PACKAGES=%q\nEXTRA_CONFIG_PATHS=%q\nEXTRA_SERVICES=%q\n' \
+                "${EXTRA_PACKAGES:-}" "${EXTRA_CONFIG_PATHS:-}" "${EXTRA_SERVICES:-}")"
+    echo "  Using the extras list from the restored ${RESTORED_ENV}"
+fi
+read -ra X_PKGS  <<< "${EXTRA_PACKAGES:-}"
+read -ra X_PATHS <<< "${EXTRA_CONFIG_PATHS:-}"
+read -ra X_SVCS  <<< "${EXTRA_SERVICES:-}"
+
+if [ ${#X_PKGS[@]} -eq 0 ] && [ ${#X_PATHS[@]} -eq 0 ] && [ ${#X_SVCS[@]} -eq 0 ]; then
+    echo "  No extras configured"
+else
+    # 1. Snapshot the restored paths BEFORE any package is installed: a package's
+    #    postinst may add defaults (nginx: sites-enabled/default with
+    #    default_server, which would shadow the restored site on port 80).
+    X_PRESENT=()
+    for p in "${X_PATHS[@]}"; do
+        # These paths are rm -rf'd and re-extracted below, so be strict:
+        # absolute, at least two non-empty levels (/etc/nginx yes; /etc, /etc/ no),
+        # no '.'/'..' components, no '//', no trailing slash.
+        case "${p}" in
+            *//*|*/|*/.|*/./*|*/..|*/../*)
+                echo "ERROR: EXTRA_CONFIG_PATHS entry '${p}' has '.', '..', '//' or a trailing slash"; exit 1 ;;
+            /?*/?*) ;;
+            *)  echo "ERROR: EXTRA_CONFIG_PATHS entry '${p}' must be an absolute path at least two levels deep"; exit 1 ;;
+        esac
+        if [ -e "${p}" ] || [ -L "${p}" ]; then
+            X_PRESENT+=("${p#/}")
+        else
+            echo "  WARNING: ${p} is listed but not in the restored config backup"
+        fi
+    done
+    X_STAGE="$(mktemp -d /root/.restore-extras.XXXXXX)"
+    if [ ${#X_PRESENT[@]} -gt 0 ]; then
+        tar -C / -cpf "${X_STAGE}/extras.tar" "${X_PRESENT[@]}"
+    fi
+
+    # 2. Packages — simulate first and refuse if apt would remove anything
+    #    (the same rule as everywhere else: never let an extra package take PVE/PBS down).
+    if [ ${#X_PKGS[@]} -gt 0 ]; then
+        echo "  Installing: ${X_PKGS[*]}"
+        # iptables-persistent would otherwise offer to save the live (empty) ruleset
+        echo 'iptables-persistent iptables-persistent/autosave_v4 boolean false' | debconf-set-selections
+        echo 'iptables-persistent iptables-persistent/autosave_v6 boolean false' | debconf-set-selections
+        apt-get update -qq
+        X_SIM="$(DEBIAN_FRONTEND=noninteractive apt-get -s install -y "${X_PKGS[@]}")"
+        X_REMOVALS="$(printf '%s\n' "${X_SIM}" | awk '/^Remv /{print $2}')"
+        if [ -n "${X_REMOVALS}" ]; then
+            echo "ERROR: installing the extras would remove: ${X_REMOVALS//$'\n'/ } — refusing"
+            exit 1
+        fi
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+            "${X_PKGS[@]}"
+    fi
+
+    # 3. Put the restored paths back exactly as they were backed up
+    if [ ${#X_PRESENT[@]} -gt 0 ]; then
+        for p in "${X_PRESENT[@]}"; do rm -rf "/${p:?}"; done
+        tar -C / -xpf "${X_STAGE}/extras.tar"
+        echo "  Restored: ${X_PRESENT[*]/#//}"
+    fi
+    rm -rf "${X_STAGE}"
+
+    # 4. Activate: units, sysctl drop-ins, services (restart so they read the restored config)
+    systemctl daemon-reload
+    sysctl --system >/dev/null || echo "  WARNING: sysctl --system reported errors"
+    for s in "${X_SVCS[@]}"; do
+        systemctl enable "${s}"
+        systemctl restart "${s}"
+    done
+    sleep 2
+    for s in "${X_SVCS[@]}"; do
+        if systemctl is-active -q "${s}"; then
+            echo "  ${s}: active"
+        else
+            echo "ERROR: ${s} is not active after restore"
+            journalctl -u "${s}" -n 20 --no-pager || true
+            exit 1
+        fi
+    done
+fi
+
 echo "=== Step 8: Restore pve-agent (monitoring) ==="
 # config backup captures /etc/pve-agent/, /opt/pve-agent/*.py, and the
 # systemd unit — restore-2-auth.sh already extracted them.

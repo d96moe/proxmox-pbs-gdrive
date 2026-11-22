@@ -121,6 +121,19 @@ After the full DR restore pipeline:
 - PBS storage (`pbs-ci`) exists in PVE
 - At least one ct/100 snapshot is visible via `proxmox-backup-client`
 - `pct status 100` returns `running` (LXC was restored from PBS and started)
+- **Host extras** come back: Scenario A runs `ci/setup-extras-fixture.sh` before the config backup. That builds an nginx reverse proxy on `:8081` in front of a helper service, removes nginx's default site, persists a NAT rule for TEST-NET-2 (`198.51.100.0/24`) with iptables-persistent, and adds a sysctl drop-in (`log_martians=1`). The matching `EXTRA_*` values are in `config_ci*.env`. After the DR the spec checks:
+  - both packages are installed
+  - `curl :8081` returns the helper's marker
+  - `sites-enabled/default` is **absent**, which shows the paths were restored after the package install
+  - the NAT rule is loaded
+  - the sysctl value is applied
+  - all three services are enabled
+
+  A DR job therefore needs a Scenario A run *with the fixture* before it, on the same arch.
+
+### Cleanup: stale restic locks
+
+Each Scenario A job ends with `restic unlock` followed by `forget --keep-last 1 --prune` on its GDrive CI repo. If that fails, the build is marked **UNSTABLE**. It used to end in `|| true`. A run that was aborted on 2026-09-14 left a lock in the arm64 repo. A stale non-exclusive lock doesn't block backup or restore, so every job stayed green, but every prune failed. By 2026-11-21 the repo had 73 snapshots and 3 GiB that should have been pruned. `unlock` without `--remove-all` only removes locks restic itself considers stale: a dead PID on the same host, or a lock not refreshed for 30 minutes. A running restic refreshes its lock every 5 minutes, so it is never affected, even though the cleanup in `post {}` runs after the Jenkins lock is released. One caveat: every arm64 CI VM is called `arm64-ci`, and every x86 one shares a hostname too. restic would therefore treat a live lock from *another* CI VM as stale if that PID doesn't exist locally. That is safe only because a job runs restic exclusively inside its locked `Run` stage. While one job's cleanup runs, the next job can at most be cloning and booting its VM. Keep `unlock` out of anywhere that can overlap another job's `Run`. The production `backup-restic-vms.sh` runs the same `unlock` before its nightly forget.
 
 ---
 

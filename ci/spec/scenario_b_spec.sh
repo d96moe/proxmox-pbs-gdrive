@@ -83,3 +83,40 @@ Describe 'Full DR: LXC restore from PBS'
         The output should include 'running'
     End
 End
+
+# Host extras: Scenario A ran ci/setup-extras-fixture.sh before the config
+# backup; restore-3-pve.sh must bring packages, paths and services back.
+Describe 'Host extras (EXTRA_PACKAGES / EXTRA_CONFIG_PATHS / EXTRA_SERVICES)'
+    It 'extra packages are installed'
+        When run dpkg-query -W -f '${Status}\n' nginx iptables-persistent
+        The output should eq "install ok installed
+install ok installed"
+    End
+
+    It 'reverse proxy answers through nginx → helper service (site + unit + script restored)'
+        When run curl -fsS --max-time 5 http://127.0.0.1:8081/
+        The output should eq 'ci-extras-ok'
+    End
+
+    It 'the package default site did not come back (paths restored exactly, after install)'
+        Path default-site=/etc/nginx/sites-enabled/default
+        The path default-site should not be exist
+    End
+
+    It 'the NAT rule is loaded from the restored /etc/iptables/rules.v4'
+        When run iptables -t nat -S POSTROUTING
+        The output should include '-A POSTROUTING -d 198.51.100.0/24 -j MASQUERADE'
+    End
+
+    It 'the restored sysctl drop-in is applied'
+        When run sysctl -n net.ipv4.conf.all.log_martians
+        The output should eq '1'
+    End
+
+    It 'every extra service is enabled'
+        When run systemctl is-enabled netfilter-persistent ci-extras-echo nginx
+        The output should eq "enabled
+enabled
+enabled"
+    End
+End
