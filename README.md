@@ -292,8 +292,8 @@ These variables are only used by `restore-1-install.sh` on arm64 when Proxmox VE
 | Variable | Default | Description |
 |---|---|---|
 | `PVE_HOSTNAME` | `proxmox` | Hostname for the Proxmox node. |
-| `PVE_IP` | — | **Required.** Static IP with prefix length, e.g. `192.168.1.200/24`. |
-| `PVE_GATEWAY` | — | **Required.** Default gateway, e.g. `192.168.1.1`. |
+| `PVE_IP` | — | **Required.** Static IP with prefix length, e.g. `192.0.2.10/24`. |
+| `PVE_GATEWAY` | — | **Required.** Default gateway, e.g. `192.0.2.1`. |
 | `PVE_DNS` | `8.8.8.8` | DNS server. |
 | `PVE_IFACE` | `eth0` | Ethernet interface name. Run `ip link` to find it (common: `eth0`, `enp2s0`). |
 | `ROOT_PASSWORD` | — | Root password to set during install. Set via `export ROOT_PASSWORD=...` or directly in config.env. |
@@ -505,7 +505,7 @@ Restoring this tarball on new hardware gives you back rclone auth, the restic pa
 
 ### Raspberry Pi 5: start from the golden image (optional, faster)
 
-On a Pi, installing PVE, PBS and the tools from scratch takes a long time. CI builds a **golden image** every week. It is the latest Raspberry Pi OS Lite with official Proxmox VE (arm64), pipbs PBS, restic, rclone, resticprofile and this repository (`/opt/proxmox-pbs-gdrive`) already installed. CI publishes it to `bu/golden-image/<date>_<commit>/` in Google Drive **only after a full DR run on it has passed**, and keeps the newest three.
+On a Pi, installing PVE, PBS and the tools from scratch takes a long time. CI builds a **golden image** every week. It is the latest Raspberry Pi OS Lite with official Proxmox VE (arm64), pipbs PBS, restic, rclone, resticprofile and the DR scripts of this repository (`/opt/proxmox-pbs-gdrive`: restore-1/2/3, the migration script, `lib/`, `scripts/`, the config templates, README) already installed. CI publishes it to `bu/golden-image/<date>_<commit>/` in Google Drive **only after a full DR run on it has passed**, and keeps the newest three.
 
 The image is **generic**. It holds software only: no user, SSH key, host keys, machine-id, PVE/PBS keys, hostname/IP or `config.env`. CI fails the build if any of these is found. You add your user and SSH key when you flash it, and everything else comes from your `config.env` and the config backup.
 

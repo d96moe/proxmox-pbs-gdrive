@@ -361,7 +361,7 @@ PBS comes from pipbs either way, because there is no official PBS arm64 build. O
 
 1. **Build** (`ci/build-golden-image.sh`, on the builder):
    - Start from the latest Pi OS Lite. Its own Pi boot chain stays untouched; the build checks that `cmdline.txt` and `config.txt` are unchanged.
-   - In a qemu-user chroot, install official PVE + pipbs PBS + restic/rclone/resticprofile, using the same repo code as `restore-1-install.sh` (`lib/arm64-repos.sh`). ZFS DKMS is prebuilt if `proxmox-ve` pulls it in. The repo is copied to `/opt/proxmox-pbs-gdrive`.
+   - In a qemu-user chroot, install official PVE + pipbs PBS + restic/rclone/resticprofile, using the same repo code as `restore-1-install.sh` (`lib/arm64-repos.sh`). ZFS DKMS is prebuilt if `proxmox-ve` pulls it in. Only the DR part of the repo goes to `/opt/proxmox-pbs-gdrive`, not `ci/`: the CI files name this lab's own Jenkins/builder/PVE addresses, which the leak gate rightly rejected in run #1. The example IPs in `config_rpi5.env` and the README use the RFC 5737 documentation range.
    - The chroot runs in its own UTS namespace with hostname `raspberrypi`, so no package records the builder's name.
    - Generalize: remove SSH host keys, `/root/.ssh`, `machine-id`, PVE/PBS keys, pmxcfs data, cloud-init state, logs and history.
 2. **Leak gate** (`ci/golden-leak-gate.sh`) fails the build on any of:

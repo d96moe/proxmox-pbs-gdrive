@@ -44,7 +44,11 @@ while IFS= read -r f; do hit "file ${f#${R}}"; done < <(
 
 echo "--- forbidden content"
 SCAN=()
-for d in etc root home opt srv usr/local var/lib boot; do [ -e "${R}/${d}" ] && SCAN+=("${R}/${d}"); done
+# usr/local: only bin/sbin/etc — usr/local/share holds man pages full of
+# example keys and IPs (rclone.1 tripped run #1), which are not host config
+for d in etc root home opt srv usr/local/bin usr/local/sbin usr/local/etc var/lib boot; do
+    [ -e "${R}/${d}" ] && SCAN+=("${R}/${d}")
+done
 # -I: skip binary files; exclude the CA bundle / package keyrings (public by design)
 GREP=(grep -rIlE --exclude-dir=ssl --exclude-dir=keyrings --exclude-dir=trusted.gpg.d
       --exclude-dir=dpkg --exclude-dir=apt --exclude-dir=pve-manager --exclude='*.dpkg-dist')

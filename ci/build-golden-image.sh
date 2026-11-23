@@ -173,11 +173,17 @@ inroot '
     echo "versions: pve-manager=$(dpkg-query -W -f="\${Version}" pve-manager) proxmox-backup-server=$(dpkg-query -W -f="\${Version}" proxmox-backup-server) restic=$(dpkg-query -W -f="\${Version}" restic) rclone=$(rclone version | awk "NR==1{print \$2}") resticprofile=$(resticprofile version | awk "{print \$3; exit}")"
 '
 
-# This repository, as built (public code — no config.env, no secrets)
-mkdir -p "${R}/opt/proxmox-pbs-gdrive"
-cp -a "${SRC_DIR}/." "${R}/opt/proxmox-pbs-gdrive/"
-rm -rf "${R}/opt/proxmox-pbs-gdrive/.git" "${R}/opt/proxmox-pbs-gdrive/config.env"
-echo "${GOLDEN_COMMIT}" > "${R}/opt/proxmox-pbs-gdrive/GOLDEN_COMMIT"
+# The DR part of this repository, as built. NOT ci/: the CI files name this
+# lab's own infrastructure (Jenkins/builder/PVE IPs and hostnames), which has
+# no place in a generic image (the leak gate caught it in run #1).
+G="${R}/opt/proxmox-pbs-gdrive"
+mkdir -p "${G}"
+for p in restore-1-install.sh restore-2-auth.sh restore-3-pve.sh migrate-arm64-pxvirt-to-official.sh \
+         lib scripts config.env.example config_rpi5.env README.md; do
+    [ -e "${SRC_DIR}/${p}" ] || { echo "ERROR: ${p} missing from the repo checkout"; exit 1; }
+    cp -a "${SRC_DIR}/${p}" "${G}/"
+done
+echo "${GOLDEN_COMMIT}" > "${G}/GOLDEN_COMMIT"
 
 # =============================================================================
 echo "=== Step 4: Generalize — remove everything that identifies a host ==="
