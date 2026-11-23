@@ -783,7 +783,15 @@ if [ "${ARCH}" = "aarch64" ]; then
 fi
 
 echo "=== Step 2: Install rclone ==="
-curl https://rclone.org/install.sh | bash
+# rclone's install.sh exits 3 when the latest version is already installed
+# (golden image, or simply re-running this script). Under pipefail that ended
+# restore-1 here (DR #76). Accept exactly 3; any other failure still stops.
+_rc=0
+curl -fsSL --retry 3 https://rclone.org/install.sh | bash || _rc=$?
+if [ "${_rc}" -ne 0 ] && [ "${_rc}" -ne 3 ]; then
+    echo "ERROR: rclone install failed (exit ${_rc})"; exit 1
+fi
+rclone version | awk 'NR==1'
 
 echo "=== Step 3: Install restic ==="
 apt_get install -y restic
