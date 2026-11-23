@@ -61,7 +61,9 @@ pipeline {
                         | ssh $SSH_OPTS root@$PVE_HOST "cat > $INCOMING"
                     ssh $SSH_OPTS root@$BUILDER 'rm -f /srv/ci-build/out/golden-test.qcow2 /srv/ci-build/out/golden-test.env'
                     eval "$(ssh $SSH_OPTS root@$BUILDER 'cat /srv/ci-build/out/golden/golden.env')"
-                    DESC="Golden image TEST copy: PVE $PVE_VERSION + PBS $PBS_VERSION on $PIOS_VERSION, commit ${GOLDEN_COMMIT:0:7} (boot layer swapped for QEMU)"
+                    # Jenkins sh is /bin/sh (dash): no ${VAR:0:7} — run #2 died on "Bad substitution"
+                    SHORT="$(echo "$GOLDEN_COMMIT" | cut -c1-7)"
+                    DESC="Golden image TEST copy: PVE $PVE_VERSION + PBS $PBS_VERSION on $PIOS_VERSION, commit $SHORT (boot layer swapped for QEMU)"
                     ssh $SSH_OPTS root@$PVE_HOST "DISK_FILE=$INCOMING TEMPLATE_ID=$GOLDEN_TPL TEMPLATE_NAME=arm64-golden-test PIOS_DESC='$DESC' bash -s" < ci/setup-arm64-pios-template.sh
                     ssh $SSH_OPTS root@$PVE_HOST "qm template $GOLDEN_TPL"
                 '''
