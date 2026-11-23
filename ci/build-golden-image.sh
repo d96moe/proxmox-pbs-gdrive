@@ -195,8 +195,11 @@ for d in dev/pts dev sys proc; do umount "${R}/${d}"; done
 # SSH host keys (Pi OS regenerates them on first boot) and any root keypair
 rm -f "${R}"/etc/ssh/ssh_host_*
 rm -rf "${R}/root/.ssh"
-# machine-id: empty file = "generate on first boot" (systemd)
-: > "${R}/etc/machine-id"
+# machine-id: "uninitialized", exactly as stock Pi OS ships it. That is what makes
+# systemd treat the next boot as the FIRST boot (ConditionFirstBoot=yes), which
+# is what runs sshd-keygen / regenerate_ssh_host_keys. An EMPTY file is not a
+# first boot: no host keys were generated and sshd never started (run #3).
+printf 'uninitialized\n' > "${R}/etc/machine-id"
 rm -f "${R}/var/lib/dbus/machine-id" "${R}/var/lib/systemd/random-seed" "${R}/var/lib/systemd/credential.secret"
 # PVE: /etc/pve is pmxcfs's mount point — anything a postinst wrote to the bare
 # directory would be hidden later anyway; config.db is created on first start

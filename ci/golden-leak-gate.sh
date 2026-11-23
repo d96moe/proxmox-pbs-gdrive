@@ -40,7 +40,10 @@ while IFS= read -r f; do hit "file ${f#${R}}"; done < <(
       find "${R}/etc/pve" -mindepth 1 2>/dev/null
       find "${R}/var/lib/cloud/instances" -mindepth 1 -maxdepth 1 2>/dev/null
     } | sort -u)
-[ -s "${R}/etc/machine-id" ] && hit "file /etc/machine-id is not empty"
+# Allowed: missing, empty, or "uninitialized" (stock Pi OS — triggers first-boot setup)
+if [ -s "${R}/etc/machine-id" ] && [ "$(cat "${R}/etc/machine-id")" != "uninitialized" ]; then
+    hit "file /etc/machine-id holds a real machine id"
+fi
 
 echo "--- forbidden content"
 SCAN=()
