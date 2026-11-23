@@ -145,6 +145,7 @@ ENDSSH
         stage('Install PVE (restore-1-install.sh Step 0)') {
             steps {
                 echo "Running restore-1-install.sh — Step 0 installs PVE (${params.PVE_ARM64_SOURCE}) and reboots..."
+                sh "ssh ${SSH_OPTS} root@${VM_IP} cat /proc/sys/kernel/random/boot_id > .step0-boot-id"
                 sh """
                     ssh ${SSH_OPTS} root@${VM_IP} bash -s << 'ENDSSH' || true
 set -euo pipefail
@@ -153,15 +154,19 @@ cp ci/config_ci_arm64.env config.env
 CI=true PVE_ARM64_SOURCE=${params.PVE_ARM64_SOURCE} ROOT_PASSWORD="ci-arm64-root" bash restore-1-install.sh
 ENDSSH
                 """
-                echo "VM is rebooting after PVE (${params.PVE_ARM64_SOURCE}) install. Waiting for SSH (max 150s)..."
+                // A REAL reboot must have happened: the old check only waited for SSH,
+                // so when Step 0 died early (no reboot, DR #75) "SSH ready after reboot"
+                // passed on the first try and the failure surfaced two stages later.
+                echo "VM is rebooting after Step 0 (${params.PVE_ARM64_SOURCE}). Waiting for a NEW boot_id (max 300s)..."
                 sh """
-                    sleep 30
-                    for i in \$(seq 1 24); do
-                        ssh ${SSH_OPTS} root@${VM_IP} true 2>/dev/null && echo "SSH ready after reboot" && exit 0
-                        echo "  attempt \$i/24..."
+                    for i in \$(seq 1 60); do
+                        NEW_BOOT=\$(ssh ${SSH_OPTS} root@${VM_IP} cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+                        if [ -n "\$NEW_BOOT" ] && [ "\$NEW_BOOT" != "\$(cat .step0-boot-id)" ]; then
+                            echo "VM back after the Step 0 reboot (new boot_id, ~\$((i*5))s)"; exit 0
+                        fi
                         sleep 5
                     done
-                    echo "ERROR: VM did not come back within 150 seconds"
+                    echo "ERROR: no reboot within 300s — restore-1 Step 0 most likely exited early (see its output above)"
                     exit 1
                 """
             }

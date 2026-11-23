@@ -273,7 +273,18 @@ if [ "${ARCH}" = "aarch64" ] && { [ "${PVE_PREINSTALLED}" -eq 0 ] || ! _node_con
         # On the golden image's first boot there are no guests yet. If there ARE,
         # this is a live node whose config just doesn't match config.env — refuse
         # instead of rewriting its network.
-        _guests="$( { qm list 2>/dev/null; pct list 2>/dev/null; } | awk 'NR>1 && $1 ~ /^[0-9]+$/' | wc -l)"
+        # Count guests WITHOUT depending on pve-cluster: on the golden image's first
+        # boot pmxcfs is down (node name -> 127.0.1.1), so qm/pct fail — and under
+        # pipefail a failing qm inside $(...) silently ended this script (DR #75).
+        # config.db is read directly too, so a live node whose pve-cluster is down
+        # is still recognised as having guests.
+        _guests_api="$( { qm list 2>/dev/null || true; pct list 2>/dev/null || true; } | awk '$1 ~ /^[0-9]+$/' | wc -l)"
+        _guests_db=0
+        if [ -s /var/lib/pve-cluster/config.db ] && command -v sqlite3 &>/dev/null; then
+            _guests_db="$(sqlite3 -readonly /var/lib/pve-cluster/config.db \
+                "SELECT count(*) FROM tree WHERE name GLOB '[0-9]*.conf'" 2>/dev/null || echo 0)"
+        fi
+        _guests=$(( _guests_api > _guests_db ? _guests_api : _guests_db ))
         if [ "${_guests}" -gt 0 ]; then
             echo "ERROR: PVE is installed and has ${_guests} guest(s), but the node does not match config.env"
             echo "  (hostname '$(hostname)' vs '${PVE_HOSTNAME}', vmbr0/address/hosts entry for ${PVE_IP})."
